@@ -279,5 +279,6 @@ For issues and questions:
 
 Author: **Jorge Gaspar Beltre Rivera**  
 Project: GPS Accident Detection System - ESP8266
+
 GitHub: [github.com/JorgeBeltre](https://github.com/JorgeGBeltre)
 
