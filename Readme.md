@@ -273,7 +273,11 @@ For issues and questions:
 **Version**: v0.0.4  
 **Hardware**: ESP8266 + MPU6050 + GPS + GSM  
 
-##Contact
-Author: Jorge Gaspar Beltre Rivera
+
+
+##  Contact
+
+Author: **Jorge Gaspar Beltre Rivera**  
 Project: GPS Accident Detection System - ESP8266
-GitHub: github.com/JorgeBeltre
+GitHub: [github.com/JorgeBeltre](https://github.com/JorgeGBeltre)
+
