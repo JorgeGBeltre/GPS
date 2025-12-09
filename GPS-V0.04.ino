@@ -18,14 +18,12 @@ extern "C" {
 #include "user_interface.h"
 }
 
-
 String MQTT_TOPIC_TELEMETRY = "telemetry";
 String MQTT_TOPIC_EVENTS = "events";
 String MQTT_TOPIC_COMMANDS = "commands";
 String MQTT_TOPIC_OTA = "ota";
 String MQTT_TOPIC_STATUS = "status";
 String MQTT_TOPIC_CONFIG = "config";
-
 
 struct DeviceInfo {
   String chipId;
@@ -55,7 +53,6 @@ struct AccidentData {
   unsigned long detection_time = 0;
 };
 
-
 WiFiClientSecure wifiClient;
 PubSubClient mqtt_client(wifiClient);
 bool mqttConnected = false;
@@ -72,7 +69,6 @@ unsigned long lastReconnectAttempt = 0;
 bool alert_triggered = false;
 unsigned long alert_time = 0;
 
-
 int16_t ax, ay, az;
 int16_t oldx = 0, oldy = 0, oldz = 0;
 int deltx = 0, delty = 0, deltz = 0;
@@ -80,7 +76,6 @@ int vibration = 2, devibrate = 75;
 int magnitude = 0;
 byte updateflag = 0;
 unsigned long lastAccidentCheck = 0;
-
 
 struct OTAContext {
     bool inProgress = false;
@@ -114,7 +109,6 @@ void publishOTAError(const String& errorMessage, const String& firmwareVersion =
 void publishOTASuccess(const String& firmwareVersion);
 String base64Decode(const String& encoded);
 
-
 String getMQTTClientID();
 bool configurarTiempoNTP();
 String getISOTimestamp();
@@ -144,6 +138,837 @@ void initializeGSM();
 bool checkGSMModule();
 bool sendATCommand(String command, String expectedResponse, unsigned long timeoutMs);
 void checkGSMStatus();
+
+
+void procesarComandoSerial();
+void mostrarMenuSerial();
+void cambiarNumeroEmergencia(String nuevoNumero);
+void cambiarSensibilidad(String valor);
+void cambiarAnguloVuelco(String valor);
+void cambiarDelayAlerta(String valor);
+void cambiarSMSHabilitado(String valor);
+void mostrarConfiguracionActual();
+void procesarComando(String comando);
+
+
+void checkGPSStatus();
+void diagnosticarGPSCompleto();
+
+
+void procesarSMSRecibido();
+void enviarRespuestaSMS(String numero, String mensaje);
+void procesarComandoSMS(String numero, String comando);
+String crearMenuSMS();
+
+template<typename T>
+T min_val(T a, T b) {
+    return (a < b) ? a : b;
+}
+
+
+
+void procesarSMSRecibido() {
+    static String buffer = "";
+    static bool enSMS = false;
+    static String numero = "";
+    static String fecha = "";
+    
+    while (sim800.available()) {
+        char c = sim800.read();
+        buffer += c;
+        
+        
+        if (buffer.indexOf("+CMT:") >= 0 && !enSMS) {
+            enSMS = true;
+           
+            int inicioNum = buffer.indexOf("\"", buffer.indexOf("+CMT:")) + 1;
+            int finNum = buffer.indexOf("\"", inicioNum);
+            if (inicioNum > 0 && finNum > inicioNum) {
+                numero = buffer.substring(inicioNum, finNum);
+            }
+            
+           
+            int inicioFecha = buffer.indexOf("\"", finNum + 1) + 1;
+            int finFecha = buffer.indexOf("\"", inicioFecha);
+            if (inicioFecha > 0 && finFecha > inicioFecha) {
+                fecha = buffer.substring(inicioFecha, finFecha);
+            }
+        }
+        
+        
+        if (enSMS && buffer.indexOf("\r\n\r\n") >= 0) {
+            int inicioMensaje = buffer.indexOf("\r\n\r\n") + 4;
+            String mensaje = buffer.substring(inicioMensaje);
+            mensaje.trim();
+            
+            if (mensaje.length() > 0) {
+                Serial.println("\n=== SMS RECIBIDO ===");
+                Serial.println("De: " + numero);
+                Serial.println("Fecha: " + fecha);
+                Serial.println("Mensaje: " + mensaje);
+                Serial.println("====================\n");
+                
+                
+                procesarComandoSMS(numero, mensaje);
+                
+                int len = mensaje.length();
+                int maxLen = 30;
+                if (len > maxLen) len = maxLen;
+                String evento = "SMS_RECEIVED: " + mensaje.substring(0, len);
+                publishEvent("SMS_RECEIVED", evento.c_str());
+            }
+            
+            
+            buffer = "";
+            enSMS = false;
+            numero = "";
+            fecha = "";
+        }
+    }
+}
+
+void enviarRespuestaSMS(String numero, String mensaje) {
+    if (!checkGSMModule()) {
+        Serial.println("ERROR: No se puede enviar SMS, módulo GSM no responde");
+        return;
+    }
+    
+    Serial.println("Enviando respuesta SMS a: " + numero);
+    Serial.println("Mensaje: " + mensaje);
+    
+    
+    sendATCommand("AT+CMGF=1", "OK", 3000);
+    sendATCommand("AT+CSCS=\"GSM\"", "OK", 3000);
+    
+    String cmd = "AT+CMGS=\"" + numero + "\"";
+    sim800.println(cmd);
+    delay(3000);
+    
+   
+    unsigned long timeout = millis();
+    bool gotPrompt = false;
+    String response = "";
+    
+    while (millis() - timeout < 10000) {
+        while (sim800.available()) {
+            char c = sim800.read();
+            response += c;
+            if (c == '>') {
+                gotPrompt = true;
+                break;
+            }
+        }
+        if (gotPrompt) break;
+        delay(100);
+    }
+    
+    if (!gotPrompt) {
+        Serial.println("ERROR: No se recibió prompt > para SMS");
+        return;
+    }
+    
+    
+    sim800.println(mensaje);
+    delay(2000);
+    
+ 
+    sim800.write(0x1A);
+    
+    
+    timeout = millis();
+    bool smsSent = false;
+    response = "";
+    
+    while (millis() - timeout < 15000) {
+        while (sim800.available()) {
+            char c = sim800.read();
+            response += c;
+            if (response.indexOf("OK") >= 0 || response.indexOf("+CMGS") >= 0) {
+                smsSent = true;
+                break;
+            }
+            if (response.indexOf("ERROR") >= 0) {
+                break;
+            }
+        }
+        if (smsSent) break;
+        delay(100);
+    }
+    
+    if (smsSent) {
+        Serial.println("Respuesta SMS enviada exitosamente");
+        publishEvent("SMS_RESPONSE_SENT", "Respuesta SMS enviada");
+    } else {
+        Serial.println("ERROR: No se pudo enviar respuesta SMS");
+    }
+}
+
+void procesarComandoSMS(String numero, String comando) {
+    comando.trim();
+    
+    if (comando.length() == 0) {
+        enviarRespuestaSMS(numero, "Comando vacío. Envía 'HELP' para ver opciones.");
+        return;
+    }
+    
+    Serial.println("Procesando comando SMS: " + comando);
+    
+    
+    String comandoUpper = comando;
+    comandoUpper.toUpperCase();
+    
+    
+    String numeroAutorizado = accidentConfig.emergency_phone;
+    numeroAutorizado.replace(" ", "");
+    numeroAutorizado.replace("-", "");
+    numeroAutorizado.replace("(", "");
+    numeroAutorizado.replace(")", "");
+    
+    String numeroEntrante = numero;
+    numeroEntrante.replace(" ", "");
+    numeroEntrante.replace("-", "");
+    numeroEntrante.replace("(", "");
+    numeroEntrante.replace(")", "");
+    
+   
+    if (comandoUpper.startsWith("AUTH ")) {
+        String codigo = comando.substring(5);
+        
+        if (codigo == "1234" || codigo == device.chipId.substring(0, 4)) {
+            enviarRespuestaSMS(numero, "¡Autorizado! Ahora puedes enviar comandos.");
+            
+            String desc1 = "Número autorizado por SMS: " + numero;
+            publishEvent("SMS_AUTHORIZED", desc1.c_str());
+            return;
+        } else {
+            enviarRespuestaSMS(numero, "Código incorrecto.");
+            return;
+        }
+    }
+    
+    
+    if (!numeroEntrante.endsWith(numeroAutorizado) && 
+        numeroAutorizado.length() >= 10 && 
+        numeroEntrante.length() >= 10) {
+        
+        
+        String numEntranteSinPrefijo = numeroEntrante;
+        if (numEntranteSinPrefijo.length() > 10) {
+            numEntranteSinPrefijo = numEntranteSinPrefijo.substring(numEntranteSinPrefijo.length() - 10);
+        }
+        
+        String numAutorizadoSinPrefijo = numeroAutorizado;
+        if (numAutorizadoSinPrefijo.length() > 10) {
+            numAutorizadoSinPrefijo = numAutorizadoSinPrefijo.substring(numAutorizadoSinPrefijo.length() - 10);
+        }
+        
+        if (numEntranteSinPrefijo != numAutorizadoSinPrefijo) {
+            enviarRespuestaSMS(numero, "No autorizado. Usa AUTH [código] o configura este número como emergencia.");
+            String desc2 = "Intento no autorizado de: " + numero;
+            publishEvent("SMS_UNAUTHORIZED", desc2.c_str());
+            return;
+        }
+    }
+    
+    
+    if (comandoUpper == "HELP" || comandoUpper == "AYUDA" || comandoUpper == "?") {
+        enviarRespuestaSMS(numero, crearMenuSMS());
+    }
+    else if (comandoUpper == "STATUS" || comandoUpper == "ESTADO") {
+        String respuesta = "ESTADO DEL SISTEMA\n";
+        respuesta += "ID: " + device.chipId + "\n";
+        respuesta += "FW: " + device.firmwareVersion + "\n";
+        respuesta += "WiFi: " + String(WiFi.status() == WL_CONNECTED ? "Conectado" : "Desconectado") + "\n";
+        respuesta += "MQTT: " + String(mqttConnected ? "Conectado" : "Desconectado") + "\n";
+        respuesta += "GPS: " + String(gps.location.isValid() ? "Con Fix" : "Sin Fix") + "\n";
+        respuesta += "Satélites: " + String(gps.satellites.value()) + "\n";
+        respuesta += "Memoria: " + String(ESP.getFreeHeap()) + " bytes\n";
+        
+        
+        publishStatus();
+        
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else if (comandoUpper == "LOCATION" || comandoUpper == "UBICACION" || comandoUpper == "LOC") {
+        GPSData data;
+        readGPSData(data);
+        
+        String respuesta = "UBICACIÓN GPS\n";
+        if (data.isValid) {
+            respuesta += "Lat: " + String(data.latitude, 6) + "\n";
+            respuesta += "Lon: " + String(data.longitude, 6) + "\n";
+            respuesta += "Alt: " + String(data.altitude, 1) + "m\n";
+            respuesta += "Vel: " + String(data.speed, 1) + "km/h\n";
+            respuesta += "Sat: " + String(data.satellites) + "\n";
+            respuesta += "Mapa: http://maps.google.com/maps?q=loc:" + 
+                        String(data.latitude, 6) + "," + String(data.longitude, 6);
+            
+            
+            publishGPSLocation(data);
+        } else {
+            respuesta += "GPS sin fix\n";
+            respuesta += "Satélites: " + String(gps.satellites.value()) + "\n";
+            respuesta += "Espere unos minutos...";
+        }
+        
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else if (comandoUpper == "CONFIG" || comandoUpper == "CONFIGURACION") {
+        String respuesta = "CONFIGURACIÓN ACTUAL\n";
+        respuesta += "Tel emerg: " + accidentConfig.emergency_phone + "\n";
+        respuesta += "Sensibilidad: " + String(accidentConfig.sensitivity) + "\n";
+        respuesta += "Ángulo vuelco: " + String(accidentConfig.rollover_angle) + "°\n";
+        respuesta += "Delay alerta: " + String(accidentConfig.alert_delay / 1000) + "s\n";
+        respuesta += "SMS: " + String(accidentConfig.sms_enabled ? "Activado" : "Desactivado") + "\n";
+        
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else if (comandoUpper == "TEST" || comandoUpper == "TEST_SMS") {
+        enviarRespuestaSMS(numero, "Enviando SMS de prueba...");
+        
+        AccidentData testAccident;
+        GPSData testGps;
+        testAccident.impact_detected = true;
+        testAccident.impact_magnitude = 2500;
+        testGps.latitude = 18.735693;
+        testGps.longitude = -70.162651;
+        testGps.isValid = true;
+        
+        sendSMSAlert(testAccident, testGps);
+        enviarRespuestaSMS(numero, "SMS de prueba enviado al número de emergencia.");
+    }
+    else if (comandoUpper.startsWith("SET PHONE ")) {
+        String nuevoNumero = comando.substring(10);
+        cambiarNumeroEmergencia(nuevoNumero);
+        enviarRespuestaSMS(numero, "Número actualizado a: " + nuevoNumero);
+    }
+    else if (comandoUpper.startsWith("SET SENS ")) {
+        String valor = comando.substring(9);
+        cambiarSensibilidad(valor);
+        enviarRespuestaSMS(numero, "Sensibilidad actualizada a: " + valor);
+    }
+    else if (comandoUpper.startsWith("SET ANGLE ")) {
+        String valor = comando.substring(10);
+        cambiarAnguloVuelco(valor);
+        enviarRespuestaSMS(numero, "Ángulo vuelco actualizado a: " + valor + "°");
+    }
+    else if (comandoUpper.startsWith("SET DELAY ")) {
+        String valor = comando.substring(10);
+        cambiarDelayAlerta(valor);
+        enviarRespuestaSMS(numero, "Delay alerta actualizado a: " + valor + "ms");
+    }
+    else if (comandoUpper.startsWith("SET SMS ")) {
+        String valor = comando.substring(8);
+        cambiarSMSHabilitado(valor);
+        enviarRespuestaSMS(numero, "SMS " + String(accidentConfig.sms_enabled ? "activado" : "desactivado"));
+    }
+    else if (comandoUpper == "SAVE" || comandoUpper == "GUARDAR") {
+        saveConfig();
+        enviarRespuestaSMS(numero, "Configuración guardada en EEPROM");
+    }
+    else if (comandoUpper == "RESET" || comandoUpper == "REINICIAR") {
+        enviarRespuestaSMS(numero, "Reiniciando dispositivo...");
+        delay(2000);
+        ESP.restart();
+    }
+    else if (comandoUpper == "WIFI" || comandoUpper == "WIFI INFO") {
+        String respuesta = "INFORMACIÓN WiFi\n";
+        respuesta += "SSID: " + WiFi.SSID() + "\n";
+        respuesta += "Estado: " + String(WiFi.status() == WL_CONNECTED ? "Conectado" : "Desconectado") + "\n";
+        if (WiFi.status() == WL_CONNECTED) {
+            respuesta += "IP: " + WiFi.localIP().toString() + "\n";
+            respuesta += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+        }
+        
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else if (comandoUpper == "GPS") {
+        String respuesta = "ESTADO GPS\n";
+        respuesta += "Satélites: " + String(gps.satellites.value()) + "\n";
+        respuesta += "Fix: " + String(gps.location.isValid() ? "SI" : "NO") + "\n";
+        if (gps.location.isValid()) {
+            respuesta += "Lat: " + String(gps.location.lat(), 6) + "\n";
+            respuesta += "Lon: " + String(gps.location.lng(), 6) + "\n";
+        } else {
+            respuesta += "Esperando señal GPS...";
+        }
+        
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else if (comandoUpper == "GSM") {
+        bool gsmOk = checkGSMModule();
+        enviarRespuestaSMS(numero, "GSM: " + String(gsmOk ? "OK" : "ERROR"));
+    }
+    else if (comandoUpper == "MQTT") {
+        String respuesta = "MQTT: " + String(mqttConnected ? "Conectado" : "Desconectado");
+        if (!mqttConnected) {
+            connectMQTT();
+            respuesta += "\nIntentando reconectar...";
+        }
+        enviarRespuestaSMS(numero, respuesta);
+    }
+    else {
+        enviarRespuestaSMS(numero, "Comando no reconocido. Envía 'HELP' para ver opciones.");
+    }
+}
+
+String crearMenuSMS() {
+    String menu = "COMANDOS DISPONIBLES:\n";
+    menu += "HELP - Este menú\n";
+    menu += "STATUS - Estado sistema\n";
+    menu += "LOCATION - Ubicación GPS\n";
+    menu += "CONFIG - Config actual\n";
+    menu += "TEST - SMS prueba\n";
+    menu += "\nCONFIGURAR:\n";
+    menu += "SET PHONE [número]\n";
+    menu += "SET SENS [valor]\n";
+    menu += "SET ANGLE [grados]\n";
+    menu += "SET DELAY [ms]\n";
+    menu += "SET SMS [ON/OFF]\n";
+    menu += "SAVE - Guardar\n";
+    menu += "\nSISTEMA:\n";
+    menu += "WIFI - Info WiFi\n";
+    menu += "GPS - Estado GPS\n";
+    menu += "GSM - Estado GSM\n";
+    menu += "MQTT - Estado MQTT\n";
+    menu += "RESET - Reiniciar\n";
+    menu += "\nID: " + device.chipId;
+    
+    return menu;
+}
+
+
+
+void checkGPSStatus() {
+    static unsigned long lastGPSDebug = 0;
+    
+    if (millis() - lastGPSDebug > 10000) { 
+        Serial.println("\n=== ESTADO GPS ===");
+        Serial.println("Datos sin procesar disponibles: " + String(gpsSerial.available()));
+        Serial.println("Chars procesados: " + String(gps.charsProcessed()));
+        Serial.println("Chars con fallos: " + String(gps.failedChecksum()));
+        Serial.println("Satélites: " + String(gps.satellites.value()));
+        Serial.println("Ubicación válida: " + String(gps.location.isValid() ? "SI" : "NO"));
+        
+        if (gps.location.isValid()) {
+            Serial.printf("Lat: %.6f, Lon: %.6f\n", gps.location.lat(), gps.location.lng());
+            Serial.printf("Altitud: %.1f m, Velocidad: %.1f km/h\n", 
+                         gps.altitude.meters(), gps.speed.kmph());
+        } else {
+            Serial.println("GPS no tiene fix aún");
+            Serial.println("Tiempo desde último fix: " + String(gps.location.age()) + "ms");
+        }
+        
+        Serial.println("================================\n");
+        lastGPSDebug = millis();
+    }
+}
+
+void diagnosticarGPSCompleto() {
+    Serial.println("=== DIAGNÓSTICO GPS COMPLETO ===");
+    
+   
+    Serial.println("1. Verificando puerto Serial GPS...");
+    gpsSerial.end();
+    delay(100);
+    gpsSerial.begin(9600);
+    Serial.println("Puerto GPS reiniciado");
+    
+   
+    pinMode(GPS_TX_PIN, OUTPUT);
+    digitalWrite(GPS_TX_PIN, HIGH);
+    delay(10);
+    int txState = digitalRead(GPS_TX_PIN);
+    Serial.println("Pin TX GPS (GPIO16): " + String(txState == HIGH ? "ALTO ✓" : "BAJO ✗"));
+    
+    
+    Serial.println("\n2. Leyendo datos GPS por 3 segundos...");
+    unsigned long startTime = millis();
+    String rawGPSData = "";
+    int byteCount = 0;
+    
+    while (millis() - startTime < 3000) {
+        while (gpsSerial.available()) {
+            char c = gpsSerial.read();
+            rawGPSData += c;
+            byteCount++;
+        }
+        delay(10);
+    }
+    
+    Serial.println("Bytes recibidos: " + String(byteCount));
+    
+    if (byteCount > 0) {
+        Serial.println("\n3. Analizando datos NMEA...");
+        
+       
+        Serial.println("Primeros 300 caracteres:");
+        int displayLimit = min(300, (int)rawGPSData.length());
+        String displayData = rawGPSData.substring(0, displayLimit);
+        Serial.println(displayData);
+        
+        
+        int nmeaLines = 0;
+        int ggaCount = 0, rmcCount = 0, gsvCount = 0, gsaCount = 0, vtgCount = 0;
+        
+        for (int i = 0; i < rawGPSData.length(); i++) {
+            if (rawGPSData[i] == '$') {
+                nmeaLines++;
+                
+                
+                if (i + 6 < rawGPSData.length()) {
+                    String nmeaType = rawGPSData.substring(i, i + 6);
+                    if (nmeaType.indexOf("GGA") > 0) ggaCount++;
+                    else if (nmeaType.indexOf("RMC") > 0) rmcCount++;
+                    else if (nmeaType.indexOf("GSV") > 0) gsvCount++;
+                    else if (nmeaType.indexOf("GSA") > 0) gsaCount++;
+                    else if (nmeaType.indexOf("VTG") > 0) vtgCount++;
+                }
+            }
+        }
+        
+        Serial.println("\n4. Estadísticas NMEA:");
+        Serial.println("Total líneas NMEA: " + String(nmeaLines));
+        Serial.println("  - GGA (posicionamiento): " + String(ggaCount));
+        Serial.println("  - RMC (mínima recomendada): " + String(rmcCount));
+        Serial.println("  - GSV (satélites en vista): " + String(gsvCount));
+        Serial.println("  - GSA (activos): " + String(gsaCount));
+        Serial.println("  - VTG (velocidad y curso): " + String(vtgCount));
+        
+       
+        if (nmeaLines > 0) {
+            Serial.println("\n5. Checksums válidos: " + String(gps.passedChecksum()));
+            Serial.println("Checksums fallidos: " + String(gps.failedChecksum()));
+        }
+        
+    } else {
+        Serial.println("\n¡ADVERTENCIA CRÍTICA: NO SE RECIBIÓ NINGÚN DATO DEL GPS!");
+        Serial.println("\nPosibles problemas:");
+        Serial.println("1. Conexiones incorrectas (GPS TX → ESP RX, GPS RX → ESP TX)");
+        Serial.println("2. Módulo GPS sin alimentación (ver LED del módulo)");
+        Serial.println("3. Baudrate incorrecto (debe ser 9600)");
+        Serial.println("4. Módulo GPS defectuoso");
+    }
+    
+    
+    Serial.println("\n6. Estado TinyGPSPlus:");
+    Serial.println("Chars procesados: " + String(gps.charsProcessed()));
+    Serial.println("Sentencias con fix: " + String(gps.sentencesWithFix()));
+    Serial.println("Edad del fix: " + String(gps.location.age()) + "ms");
+    
+    
+    if (gps.satellites.isValid()) {
+        Serial.println("\n7. Información de satélites:");
+        Serial.println("Satélites visibles: " + String(gps.satellites.value()));
+        Serial.println("HDOP (precisión horizontal): " + String(gps.hdop.value() / 100.0));
+    }
+    
+    Serial.println("\n=== FIN DIAGNÓSTICO GPS ===\n");
+}
+
+
+
+void procesarComandoSerial() {
+    static String inputString = "";
+    
+    while (Serial.available()) {
+        char inChar = (char)Serial.read();
+        
+        if (inChar == '\n' || inChar == '\r') {
+            if (inputString.length() > 0) {
+                procesarComando(inputString);
+                inputString = "";
+            }
+        } else {
+            inputString += inChar;
+        }
+    }
+}
+
+void procesarComando(String comando) {
+    comando.trim();
+    
+    if (comando.length() == 0) return;
+    
+    Serial.println("Comando recibido: " + comando);
+    
+    
+    String comandoLower = comando;
+    comandoLower.toLowerCase();
+    
+    if (comandoLower == "help" || comandoLower == "?") {
+        mostrarMenuSerial();
+    }
+    else if (comandoLower == "config" || comandoLower == "show") {
+        mostrarConfiguracionActual();
+    }
+    else if (comandoLower == "status") {
+        publishStatus();
+        Serial.println("Estado publicado por MQTT");
+    }
+    else if (comandoLower == "location") {
+        GPSData data;
+        readGPSData(data);
+        if (data.isValid) {
+            Serial.printf("Ubicación: Lat: %.6f, Lon: %.6f\n", data.latitude, data.longitude);
+            publishGPSLocation(data);
+        } else {
+            Serial.println("GPS no válido - Satélites: " + String(gps.satellites.value()));
+        }
+    }
+    else if (comandoLower == "test_sms") {
+        Serial.println("Enviando SMS de prueba...");
+        AccidentData testAccident;
+        GPSData testGps;
+        testAccident.impact_detected = true;
+        testAccident.impact_magnitude = 2500;
+        testGps.latitude = 18.735693;
+        testGps.longitude = -70.162651;
+        testGps.isValid = true;
+        sendSMSAlert(testAccident, testGps);
+    }
+    else if (comandoLower.startsWith("set phone ")) {
+        String nuevoNumero = comando.substring(10);
+        cambiarNumeroEmergencia(nuevoNumero);
+    }
+    else if (comandoLower.startsWith("set sensitivity ")) {
+        String valor = comando.substring(16);
+        cambiarSensibilidad(valor);
+    }
+    else if (comandoLower.startsWith("set angle ")) {
+        String valor = comando.substring(10);
+        cambiarAnguloVuelco(valor);
+    }
+    else if (comandoLower.startsWith("set delay ")) {
+        String valor = comando.substring(10);
+        cambiarDelayAlerta(valor);
+    }
+    else if (comandoLower.startsWith("set sms ")) {
+        String valor = comando.substring(8);
+        cambiarSMSHabilitado(valor);
+    }
+    else if (comandoLower == "save") {
+        saveConfig();
+        Serial.println("Configuración guardada en EEPROM");
+    }
+    else if (comandoLower == "reset") {
+        Serial.println("Reiniciando dispositivo...");
+        delay(1000);
+        ESP.restart();
+    }
+    else if (comandoLower == "wifi") {
+        Serial.println("Información WiFi:");
+        Serial.println("  SSID: " + WiFi.SSID());
+        Serial.println("  Estado: " + String(WiFi.status() == WL_CONNECTED ? "Conectado" : "Desconectado"));
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("  IP: " + WiFi.localIP().toString());
+            Serial.println("  RSSI: " + String(WiFi.RSSI()) + " dBm");
+        }
+    }
+    else if (comandoLower == "mqtt") {
+        Serial.println("Estado MQTT: " + String(mqttConnected ? "Conectado" : "Desconectado"));
+        if (!mqttConnected) {
+            connectMQTT();
+        }
+    }
+    else if (comandoLower == "gsm") {
+        Serial.println("Verificando módulo GSM...");
+        bool gsmOk = checkGSMModule();
+        Serial.println("GSM: " + String(gsmOk ? "OK" : "ERROR"));
+    }
+    else if (comandoLower == "gps") {
+        Serial.println("Estado GPS:");
+        Serial.println("  Satélites: " + String(gps.satellites.value()));
+        Serial.println("  Ubicación válida: " + String(gps.location.isValid() ? "SI" : "NO"));
+        if (gps.location.isValid()) {
+            Serial.printf("  Latitud: %.6f\n", gps.location.lat());
+            Serial.printf("  Longitud: %.6f\n", gps.location.lng());
+            Serial.printf("  Altitud: %.1f m\n", gps.altitude.meters());
+            Serial.printf("  Velocidad: %.1f km/h\n", gps.speed.kmph());
+        } else {
+            Serial.println("  Edad del fix: " + String(gps.location.age()) + "ms");
+        }
+        Serial.println("  Chars procesados: " + String(gps.charsProcessed()));
+    }
+    else if (comandoLower == "gps_debug" || comandoLower == "gps_diagnostic") {
+        diagnosticarGPSCompleto();
+    }
+    else if (comandoLower == "gps_raw") {
+        Serial.println("Mostrando datos RAW GPS por 5 segundos...");
+        Serial.println("(Presiona cualquier tecla para detener)");
+        
+        unsigned long startTime = millis();
+        while (millis() - startTime < 5000) {
+            if (Serial.available()) {
+                while (Serial.available()) Serial.read();
+                break;
+            }
+            
+            while (gpsSerial.available()) {
+                char c = gpsSerial.read();
+                Serial.write(c);
+            }
+            delay(10);
+        }
+        Serial.println("\nFin datos RAW GPS");
+    }
+    else if (comandoLower == "sms_test") {
+        Serial.println("Enviando SMS de prueba a número configurado...");
+        enviarRespuestaSMS(accidentConfig.emergency_phone, "SMS de prueba desde comando Serial. ID: " + device.chipId);
+    }
+    else {
+        Serial.println("Comando no reconocido. Escribe 'help' para ver los comandos disponibles.");
+    }
+}
+
+void mostrarMenuSerial() {
+    Serial.println("\n=== COMANDOS DISPONIBLES ===");
+    Serial.println("help o ?          - Muestra este menú");
+    Serial.println("config o show     - Muestra configuración actual");
+    Serial.println("status            - Publica estado por MQTT");
+    Serial.println("location          - Obtiene y publica ubicación GPS");
+    Serial.println("test_sms          - Envía SMS de prueba");
+    Serial.println("sms_test          - Envía SMS test al número config");
+    Serial.println("");
+    Serial.println("=== CONFIGURACIÓN ===");
+    Serial.println("set phone [número] - Cambia número de emergencia");
+    Serial.println("                    Ej: set phone +18291234567");
+    Serial.println("set sensitivity [valor] - Cambia sensibilidad (500-10000)");
+    Serial.println("                    Ej: set sensitivity 2500");
+    Serial.println("set angle [grados] - Cambia ángulo de vuelco (10-90)");
+    Serial.println("                    Ej: set angle 60");
+    Serial.println("set delay [ms]    - Cambia delay de alerta (1000-600000)");
+    Serial.println("                    Ej: set delay 30000");
+    Serial.println("set sms [on/off]  - Habilita/deshabilita SMS");
+    Serial.println("                    Ej: set sms on");
+    Serial.println("save              - Guarda configuración en EEPROM");
+    Serial.println("");
+    Serial.println("=== SISTEMA ===");
+    Serial.println("wifi              - Muestra info WiFi");
+    Serial.println("mqtt              - Muestra/conecta MQTT");
+    Serial.println("gsm               - Verifica módulo GSM");
+    Serial.println("gps               - Muestra info GPS");
+    Serial.println("gps_debug         - Diagnóstico completo GPS");
+    Serial.println("gps_raw           - Muestra datos RAW GPS");
+    Serial.println("reset             - Reinicia dispositivo");
+    Serial.println("");
+    Serial.println("=== COMANDOS SMS ===");
+    Serial.println("Los mismos comandos se pueden enviar por SMS");
+    Serial.println("al número configurado como emergencia");
+    Serial.println("========================\n");
+}
+
+void cambiarNumeroEmergencia(String nuevoNumero) {
+    nuevoNumero.trim();
+    
+    
+    if (nuevoNumero.length() < 10) {
+        Serial.println("ERROR: Número demasiado corto (mínimo 10 dígitos)");
+        return;
+    }
+    
+    
+    int digitCount = 0;
+    for (int i = 0; i < nuevoNumero.length(); i++) {
+        if (isdigit(nuevoNumero[i]) || nuevoNumero[i] == '+') {
+            digitCount++;
+        }
+    }
+    
+    if (digitCount < 10) {
+        Serial.println("ERROR: Número debe contener al menos 10 dígitos");
+        return;
+    }
+    
+   
+    String oldNumber = accidentConfig.emergency_phone;
+    accidentConfig.emergency_phone = nuevoNumero;
+    
+    Serial.println("Número de emergencia actualizado:");
+    Serial.println("  Antiguo: " + oldNumber);
+    Serial.println("  Nuevo: " + accidentConfig.emergency_phone);
+    
+    
+    saveConfig();
+    String mensaje = "Número actualizado vía Serial: " + nuevoNumero;
+    publishEvent("PHONE_UPDATED_SERIAL", mensaje.c_str());
+}
+
+void cambiarSensibilidad(String valor) {
+    int sens = valor.toInt();
+    
+    if (sens >= 500 && sens <= 10000) {
+        accidentConfig.sensitivity = sens;
+        Serial.println("Sensibilidad actualizada a: " + String(sens));
+        saveConfig();
+    } else {
+        Serial.println("ERROR: Sensibilidad debe estar entre 500 y 10000");
+    }
+}
+
+void cambiarAnguloVuelco(String valor) {
+    int angulo = valor.toInt();
+    
+    if (angulo >= 10 && angulo <= 90) {
+        accidentConfig.rollover_angle = angulo;
+        Serial.println("Ángulo de vuelco actualizado a: " + String(angulo) + "°");
+        saveConfig();
+    } else {
+        Serial.println("ERROR: Ángulo debe estar entre 10 y 90 grados");
+    }
+}
+
+void cambiarDelayAlerta(String valor) {
+    unsigned long delay = valor.toInt();
+    
+    if (delay >= 1000 && delay <= 600000) {
+        accidentConfig.alert_delay = delay;
+        Serial.println("Delay de alerta actualizado a: " + String(delay) + "ms");
+        saveConfig();
+    } else {
+        Serial.println("ERROR: Delay debe estar entre 1000 y 600000 ms");
+    }
+}
+
+void cambiarSMSHabilitado(String valor) {
+    valor.toLowerCase();
+    
+    if (valor == "on" || valor == "true" || valor == "1" || valor == "si" || valor == "yes") {
+        accidentConfig.sms_enabled = true;
+        Serial.println("SMS habilitado");
+        saveConfig();
+    }
+    else if (valor == "off" || valor == "false" || valor == "0" || valor == "no") {
+        accidentConfig.sms_enabled = false;
+        Serial.println("SMS deshabilitado");
+        saveConfig();
+    }
+    else {
+        Serial.println("ERROR: Use 'on' o 'off'");
+    }
+}
+
+void mostrarConfiguracionActual() {
+    Serial.println("\n=== CONFIGURACIÓN ACTUAL ===");
+    Serial.println("Número emergencia: " + accidentConfig.emergency_phone);
+    Serial.println("Sensibilidad: " + String(accidentConfig.sensitivity));
+    Serial.println("Ángulo vuelco: " + String(accidentConfig.rollover_angle) + "°");
+    Serial.println("Delay alerta: " + String(accidentConfig.alert_delay) + "ms");
+    Serial.println("SMS habilitado: " + String(accidentConfig.sms_enabled ? "SI" : "NO"));
+    Serial.println("ID Dispositivo: " + device.chipId);
+    Serial.println("Versión FW: " + device.firmwareVersion);
+    
+    
+    Serial.println("\n=== ESTADO GPS ACTUAL ===");
+    Serial.println("Fix válido: " + String(gps.location.isValid() ? "SI" : "NO"));
+    Serial.println("Satélites: " + String(gps.satellites.value()));
+    Serial.println("Chars procesados: " + String(gps.charsProcessed()));
+    if (gps.location.isValid()) {
+        Serial.printf("Ubicación: Lat %.6f, Lon %.6f\n", gps.location.lat(), gps.location.lng());
+    }
+    Serial.println("===========================\n");
+}
+
 
 
 void procesarOTAChunk(const String& message) {
@@ -481,28 +1306,22 @@ bool isBase64(unsigned char c) {
     return (isalnum(c) || (c == '+') || (c == '/'));
 }
 
-
 void initializeGSM() {
     Serial.println("Inicializando módulo GSM...");
     
-   
     delay(3000);
-    
     
     if (!checkGSMModule()) {
         Serial.println("ERROR: No se puede comunicar con módulo GSM");
         return;
     }
     
-    
     sendATCommand("ATE0", "OK", 2000);  
     sendATCommand("AT+CMGF=1", "OK", 2000);  
     sendATCommand("AT+CNMI=2,2,0,0,0", "OK", 2000);  
     
-    Serial.println("Módulo GSM inicializado");
+    Serial.println("Módulo GSM inicializado para recibir SMS");
 }
-
-
 
 void checkGSMStatus() {
     static unsigned long lastCheck = 0;
@@ -518,49 +1337,78 @@ void checkGSMStatus() {
 
 void loadConfig() {
   EEPROM.begin(EEPROM_SIZE);
+
+  AccidentConfig defaultConfig; 
   
   char marker[4];
   for (int i = 0; i < 4; i++) {
     marker[i] = EEPROM.read(CONFIG_EEPROM_ADDR + i);
   }
   
-  if (String(marker) != "CFG") {
-    Serial.println("Configuración por defecto - primera vez");
-    saveConfig(); 
-    return;
+  bool configLoadedFromEEPROM = false;
+  
+  if (String(marker) == "CFG") {
+    int addr = CONFIG_EEPROM_ADDR + 4;
+    
+    int savedSensitivity = EEPROM.read(addr) | (EEPROM.read(addr + 1) << 8);
+    addr += 2;
+    
+    int savedRolloverAngle = EEPROM.read(addr);
+    addr += 1;
+    
+    unsigned long savedAlertDelay = 0;
+    for (int i = 0; i < 4; i++) {
+      savedAlertDelay |= (unsigned long)EEPROM.read(addr + i) << (8 * i);
+    }
+    addr += 4;
+    
+    bool savedSmsEnabled = EEPROM.read(addr);
+    addr += 1;
+    
+    String savedPhone = "";
+    char ch;
+    int maxPhoneLength = 30;
+    bool validPhone = true;
+    
+    for (int i = 0; i < maxPhoneLength; i++) {
+      ch = EEPROM.read(addr + i);
+      if (ch == 0 || ch == 0xFF) {
+        break;
+      }
+     
+      if (!(isdigit(ch) || ch == '+' || ch == ' ' || ch == '-' || ch == '(' || ch == ')')) {
+        validPhone = false;
+        break;
+      }
+      savedPhone += ch;
+    }
+    
+    if (savedSensitivity >= 500 && savedSensitivity <= 10000 &&
+        savedRolloverAngle >= 10 && savedRolloverAngle <= 90 &&
+        savedAlertDelay >= 1000 && savedAlertDelay <= 600000 &&
+        validPhone && savedPhone.length() >= 10) {
+      
+      accidentConfig.sensitivity = savedSensitivity;
+      accidentConfig.rollover_angle = savedRolloverAngle;
+      accidentConfig.alert_delay = savedAlertDelay;
+      accidentConfig.sms_enabled = savedSmsEnabled;
+      accidentConfig.emergency_phone = savedPhone;
+      
+      configLoadedFromEEPROM = true;
+      Serial.println("Configuración cargada de EEPROM");
+    } else {
+      Serial.println("Configuración en EEPROM inválida, usando valores por defecto");
+    }
   }
   
-  int addr = CONFIG_EEPROM_ADDR + 4;
-  
-  
-  accidentConfig.sensitivity = EEPROM.read(addr) | (EEPROM.read(addr + 1) << 8);
-  addr += 2;
-  
-  
-  accidentConfig.rollover_angle = EEPROM.read(addr);
-  addr += 1;
-  
-  
-  accidentConfig.alert_delay = 0;
-  for (int i = 0; i < 4; i++) {
-    accidentConfig.alert_delay |= (unsigned long)EEPROM.read(addr + i) << (8 * i);
+  if (!configLoadedFromEEPROM) {
+    accidentConfig = defaultConfig; 
+    Serial.println("Usando configuración por defecto de config.h");
+    
+    saveConfig();
   }
-  addr += 4;
   
-  
-  accidentConfig.sms_enabled = EEPROM.read(addr);
-  addr += 1;
-  
-  
-  String phone = "";
-  char ch;
-  while (addr < EEPROM_SIZE && (ch = EEPROM.read(addr)) != 0 && addr < CONFIG_EEPROM_ADDR + 100) {
-    phone += ch;
-    addr++;
-  }
-  accidentConfig.emergency_phone = phone;
-  
-  Serial.println("Configuración cargada de EEPROM:");
+  Serial.println("Configuración actual:");
   Serial.printf("  Sensibilidad: %d\n", accidentConfig.sensitivity);
   Serial.printf("  Ángulo vuelco: %d\n", accidentConfig.rollover_angle);
   Serial.printf("  Delay alerta: %lu\n", accidentConfig.alert_delay);
@@ -573,32 +1421,26 @@ void saveConfig() {
   
   int addr = CONFIG_EEPROM_ADDR;
   
-  
   EEPROM.write(addr, 'C');
   EEPROM.write(addr + 1, 'F');
   EEPROM.write(addr + 2, 'G');
   EEPROM.write(addr + 3, '\0');
   addr += 4;
   
-  
   EEPROM.write(addr, accidentConfig.sensitivity & 0xFF);
   EEPROM.write(addr + 1, (accidentConfig.sensitivity >> 8) & 0xFF);
   addr += 2;
   
-  
   EEPROM.write(addr, accidentConfig.rollover_angle);
   addr += 1;
-  
   
   for (int i = 0; i < 4; i++) {
     EEPROM.write(addr + i, (accidentConfig.alert_delay >> (8 * i)) & 0xFF);
   }
   addr += 4;
   
-  
   EEPROM.write(addr, accidentConfig.sms_enabled);
   addr += 1;
-  
   
   for (int i = 0; i < accidentConfig.emergency_phone.length(); i++) {
     EEPROM.write(addr + i, accidentConfig.emergency_phone[i]);
@@ -677,14 +1519,12 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
 
     Serial.println("=== INICIANDO ENVÍO DE SMS ===");
 
-    
     if (!checkGSMModule()) {
         Serial.println("ERROR: Módulo GSM no responde");
         publishEvent("SMS_ERROR", "Módulo GSM no responde");
         return;
     }
 
-    
     String sms_data = "ALERTA ACCIDENTE\r\n";
     if (accident.impact_detected) sms_data += "Tipo: IMPACTO\r\n";
     if (accident.rollover_detected) sms_data += "Tipo: VUELCO\r\n";
@@ -703,29 +1543,24 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
     Serial.println("Mensaje preparado:");
     Serial.println(sms_data);
 
-   
     Serial.println("Configurando modo texto GSM...");
     if (!sendATCommand("AT+CMGF=1", "OK", 5000)) {
         Serial.println("ERROR: No se pudo configurar modo texto");
         return;
     }
 
-    
     Serial.println("Configurando codificación GSM...");
     if (!sendATCommand("AT+CSCS=\"GSM\"", "OK", 3000)) {
         Serial.println("ERROR: No se pudo configurar codificación GSM");
         return;
     }
 
-  
     String phoneNumber = accidentConfig.emergency_phone;
-    
     
     phoneNumber.replace(" ", "");
     phoneNumber.replace("-", "");
     phoneNumber.replace("(", "");
     phoneNumber.replace(")", "");
-    
     
     if (!phoneNumber.startsWith("+")) {
         phoneNumber = "+" + phoneNumber;
@@ -733,14 +1568,12 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
     
     Serial.println("Número destino: " + phoneNumber);
 
-   
     String cmd = "AT+CMGS=\"" + phoneNumber + "\"";
     Serial.println("Enviando comando SMS: " + cmd);
     
     sim800.println(cmd);
     delay(3000); 
 
-    
     Serial.println("Esperando prompt > ...");
     unsigned long timeout = millis();
     bool gotPrompt = false;
@@ -768,15 +1601,12 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
         return;
     }
 
-    
     Serial.println("Enviando contenido del SMS...");
     sim800.println(sms_data);
     delay(2000);
 
-    
     Serial.println("Finalizando con Ctrl+Z...");
     sim800.write(0x1A);  
-    
     
     Serial.println("Esperando confirmación...");
     timeout = millis();
@@ -812,7 +1642,6 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
         publishEvent("SMS_ERROR", "Fallo en envío de SMS");
     }
     
-    
     while (sim800.available()) {
         sim800.read();
     }
@@ -823,12 +1652,10 @@ void sendSMSAlert(const AccidentData& accident, const GPSData& gps) {
 bool checkGSMModule() {
     Serial.println("Verificando módulo GSM...");
     
-    
     while (sim800.available()) {
         sim800.read();
     }
     
-   
     sim800.println("AT");
     delay(1000);
     
@@ -857,15 +1684,12 @@ bool checkGSMModule() {
 bool sendATCommand(String command, String expectedResponse, unsigned long timeoutMs) {
     Serial.println("Enviando: " + command);
     
-    
     while (sim800.available()) {
         sim800.read();
     }
     
-    
     sim800.println(command);
     
-   
     unsigned long startTime = millis();
     String response = "";
     
@@ -1038,6 +1862,14 @@ void readGPSData(GPSData& data) {
         data.course = gps.course.deg();
         data.satellites = gps.satellites.value();
         data.timestamp = getISOTimestamp();
+    } else {
+        
+        static unsigned long lastGPSWarning = 0;
+        if (millis() - lastGPSWarning > 30000) {
+            Serial.printf("GPS aún no tiene fix - Satélites: %d, Edad datos: %dms\n", 
+                         gps.satellites.value(), gps.location.age());
+            lastGPSWarning = millis();
+        }
     }
 }
 
@@ -1120,6 +1952,11 @@ void publishStatus() {
     status += "\"rssi\":" + String(WiFi.RSSI()) + ",";
     status += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
     status += "\"uptime\":" + String(millis()) + ",";
+    status += "\"gps_status\":{";
+    status += "\"has_fix\":" + String(gps.location.isValid() ? "true" : "false") + ",";
+    status += "\"satellites\":" + String(gps.satellites.value()) + ",";
+    status += "\"age\":" + String(gps.location.age());
+    status += "},";
     status += "\"accident_config\":{";
     status += "\"sensitivity\":" + String(accidentConfig.sensitivity) + ",";
     status += "\"rollover_angle\":" + String(accidentConfig.rollover_angle) + ",";
@@ -1415,20 +2252,44 @@ void setupWiFi() {
 void setup() {
   Serial.begin(115200);
   
-  
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(wifiLed, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(wifiLed, LOW);
   digitalWrite(BUZZER_PIN, LOW);
 
-  
   loadConfig();
 
- 
-  gpsSerial.begin(9600);
-  Serial.println("GPS inicializado");
 
+  Serial.println("\n=== INICIALIZANDO GPS ===");
+  gpsSerial.begin(9600);
+  delay(1000);
+  
+  
+  Serial.println("Verificando conexión GPS...");
+  delay(2000);
+  
+  int bytesAvailable = gpsSerial.available();
+  Serial.println("Bytes disponibles en puerto GPS: " + String(bytesAvailable));
+  
+  if (bytesAvailable > 0) {
+    Serial.println("GPS DETECTADO - Recibiendo datos");
+    
+    String initialData = "";
+    for (int i = 0; i < min(100, bytesAvailable); i++) {
+      char c = gpsSerial.read();
+      initialData += c;
+    }
+    Serial.println("Datos iniciales (primeros 100 chars):");
+    Serial.println(initialData);
+  } else {
+    Serial.println("¡ADVERTENCIA: GPS NO ESTÁ ENVIANDO DATOS!");
+    Serial.println("Posibles problemas:");
+    Serial.println("1. Verifica conexiones: GPS TX → GPIO14, GPS RX → GPIO16");
+    Serial.println("2. Verifica alimentación del módulo GPS");
+    Serial.println("3. Verifica que el LED del GPS parpadee");
+  }
+  
  
   Wire.begin(SDA_PIN, SCL_PIN);
   mpu.initialize();
@@ -1438,19 +2299,7 @@ void setup() {
     Serial.println("MPU6050 listo");
   }
 
-  /*
-  sim800.begin(9600);
-  delay(1000);
-  sim800.println("AT");
-  delay(1000);
-  sim800.println("ATE1");
-  delay(1000);
-  sim800.println("AT+CMGF=1");
-  delay(1000);
-  Serial.println("GSM inicializado");
-  sim800.begin(9600);
-  initializeGSM();
-*/ 
+  
   sim800.begin(9600);
   initializeGSM();
 
@@ -1465,27 +2314,45 @@ void setup() {
   device = getDeviceInfo();
   setupOTA();
 
-  Serial.println("\nSistema de Detección de Accidentes - OTA Simplificado");
-  Serial.println("Client ID: " + device.chipId);
+  Serial.println("\n=================================");
+  Serial.println("Sistema de Detección de Accidentes");
+  Serial.println("Versión: " + device.firmwareVersion);
+  Serial.println("ID: " + device.chipId);
+  Serial.println("GPS: " + String(bytesAvailable > 0 ? "DETECTADO" : "NO DETECTADO"));
+  Serial.println("MPU6050: " + String(mpu.testConnection() ? "OK" : "ERROR"));
+  Serial.println("GSM: " + String(checkGSMModule() ? "OK" : "ERROR"));
+  Serial.println("=================================");
+  
+
+  mostrarMenuSerial();
+  
+ 
+  mostrarConfiguracionActual();
 
   publishEvent("SYSTEM_START", "Sistema de detección de accidentes iniciado");
 }
 
 void loop() {
     
+    procesarComandoSerial();
+    
+   
+    procesarSMSRecibido();
+    
+    
     while (gpsSerial.available() > 0) {
-        gps.encode(gpsSerial.read());
+        char c = gpsSerial.read();
+        gps.encode(c);
+        // Opcional: mostrar datos RAW (descomentar para debug)
+        // if (c == '\n' || c == '\r') Serial.println();
+        // Serial.write(c);
     }
 
-   
+    
+    checkGPSStatus();
+
+    
     checkGSMStatus();
-
-   
-    while (sim800.available()) {
-        String response = sim800.readString();
-        Serial.print("GSM: ");
-        Serial.println(response);
-    }
 
     
     if (!otaContext.inProgress) {
@@ -1501,12 +2368,12 @@ void loop() {
         publishEvent("ALERT_CANCELLED", "Alerta cancelada manualmente");
     }
 
-    
+   
     updateWiFiLED();
     updateWiFiStatus();
     handleButton();
 
-   
+    
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqtt_client.connected()) {
             mqttConnected = false;
@@ -1538,10 +2405,10 @@ void loop() {
         lastStatusPublish = millis();
     }
 
-    
+  
     verificarYSincronizarTiempo();
 
-   
+    
     if (otaInProgress) {
         ArduinoOTA.handle();
     }
