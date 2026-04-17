@@ -1,10 +1,15 @@
 # GPS Accident Detection System - ESP8266
 
+[![Platform](https://img.shields.io/badge/platform-ESP8266-orange)](https://www.espressif.com/en/products/socs/esp8266)
+[![MQTT 3.1.1](https://img.shields.io/badge/MQTT-3.1.1-orange)](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A comprehensive IoT-based vehicle accident detection system that monitors vehicle movements, detects accidents using MPU6050 sensor, provides GPS location tracking, and sends emergency alerts via MQTT and SMS.
 
 ## Table of Contents
 - [Overview](#overview)
 - [Features](#features)
+- [Backend Implementation](#backend-implementation)
 - [Hardware Requirements](#hardware-requirements)
 - [Pin Configuration](#pin-configuration)
 - [Installation](#installation)
@@ -12,7 +17,11 @@ A comprehensive IoT-based vehicle accident detection system that monitors vehicl
 - [MQTT Topics](#mqtt-topics)
 - [API Reference](#api-reference)
 - [OTA Updates](#ota-updates)
+- [Common Issues](#common-issues)
 - [Troubleshooting](#troubleshooting)
+- [Broker Compatibility](#broker-compatibility)
+- [License](#license)
+- [Contact](#contact)
 - [Support](#support)
 
 ## Overview
@@ -375,9 +384,7 @@ The system supports chunked OTA updates via MQTT:
 - Error Recovery: Automatic cleanup on failure
 - Version Validation: Prevents downgrade attacks
 
-## Troubleshooting
-
-### Common Issues
+## Common Issues
 
 #### WiFi Connection Problems
 - Symptoms: Rapid LED blinking, no MQTT connection
@@ -428,7 +435,7 @@ Enable debug output by defining `ENABLE_DEBUG` in `config.h`:
 | Fast Blink | WiFi disconnected |
 | Buzzer Sound | Accident detected |
 
-## Support
+## Troubleshooting
 
 For issues and questions:
 1. Check the troubleshooting section
@@ -437,9 +444,77 @@ For issues and questions:
 4. Review MQTT broker configuration
 5. Use diagnostic commands for detailed debugging
 
+
 ---
 
-**Version**: v0.0.4  
-**Hardware**: ESP8266 + MPU6050 + GPS + GSM  
-**Author**: **Jorge Gaspar Beltre Rivera**  
-**GitHub**: [github.com/JorgeGBeltre](https://github.com/JorgeGBeltre)
+## Backend Implementation
+
+To use MQTTOTA in your project, you'll need an MQTT server to manage OTA updates. You can implement your own backend using our reference repository:
+
+**MQTT Broker for OTA Updates**
+- **Repository:** [github.com/Ruben890/Mqtt-Broker](https://github.com/Ruben890/Mqtt-Broker)
+- **Description:** Complete backend for managing OTA updates via MQTT/MQTTS
+- **Features:**
+  - Configurable MQTT server
+  - IoT device management
+  - Firmware update delivery
+  - OTA progress tracking
+  - Error handling and retry mechanisms
+
+**Steps to use the backend:**
+1. Clone the backend repository
+2. Configure the MQTT broker according to your needs
+3. Implement the update delivery logic
+4. Connect your ESP32 devices to the broker
+5. Manage OTA updates from a centralized interface
+
+**Example workflow:**
+```javascript
+// From your backend
+1. Prepare firmware in base64 format
+2. Publish MQTT message to target device
+3. Monitor progress via callbacks
+4. Confirm successful completion
+5. Log results in database
+```
+
+The backend provides a scalable architecture for managing multiple devices simultaneously, with support for mass updates and firmware version management.
+
+---
+
+## Broker Compatibility
+
+Tested with:
+- [Mosquitto](https://mosquitto.org/) 2.0+
+- [EMQX](https://www.emqx.com/) 5.0+
+- [HiveMQ Cloud](https://www.hivemq.com/)
+- [AWS IoT Core](https://aws.amazon.com/iot-core/)
+- ESP-IDF MQTT client (used in `BasicOTA` example)
+
+---
+
+
+## License
+
+Licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
+
+---
+
+## Contact
+
+Author: **Jorge Gaspar Beltre Rivera**  
+Project: **GPS Accident Detection System - ESP8266**
+
+ [![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/JorgeGBeltre)
+ [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jorge-gaspar-beltre-rivera/)
+ [![Email](https://img.shields.io/badge/Email-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:Jorgegaspar3021@gmail.com)
+
+---
+
+##  Support
+
+This project is developed independently.
+
+Even a small contribution helps me dedicate more time to development, testing, and releasing new features.
+
+ [![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.paypal.com/donate/?hosted_button_id=2VLA8BWT967LU)
