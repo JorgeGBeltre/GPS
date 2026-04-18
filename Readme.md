@@ -28,6 +28,25 @@ A comprehensive IoT-based vehicle accident detection system that monitors vehicl
 
 This system uses an ESP8266 microcontroller to monitor vehicle movements in real-time. It detects accidents through impact analysis and rollover detection using an MPU6050 accelerometer/gyroscope, tracks location via GPS, and automatically sends emergency notifications through MQTT and SMS alerts.
 
+### System Evolution (v0.0.5)
+The project has evolved from a monolithic prototype to an **Modular System**. This overhaul decouples hardware management into specialized C++ modules, ensuring higher reliability, better memory management, and cleaner code maintenance.
+
+## Project Structure
+
+The codebase is organized into functional modules to ensure a clear Separation of Concerns (SoC):
+
+| Module/File | Function |
+|-------------|----------|
+| `GPS.ino` | Main system orchestrator and event dispatcher. |
+| `AccidentMonitor` | MPU6050 logic, vibration filtering, and accident detection. |
+| `GpsModule` | GPS stream acquisition and location parsing (TinyGPSPlus). |
+| `GsmModule` | SIM800L management, SMS command parsing, and alerting. |
+| `MqttClientModule` | Secure MQTTS communication and remote configuration. |
+| `DeviceConfig` | JSON-based persistent storage management using LittleFS. |
+| `SysUtils` | System utilities: NTP sync, ISO timestamps, and Base64. |
+| `Types.h` | Shared structures and system-wide data types. |
+| `config.h` | Global hardware pins, constants, and fixed settings. |
+
 ## Features
 
 ### Core Functionality
@@ -40,13 +59,14 @@ This system uses an ESP8266 microcontroller to monitor vehicle movements in real
 - **Multiple Configuration Methods**: Serial, SMS, MQTT, and Web Interface
 
 ### Technical Features
-- **Configurable Sensitivity**: Adjustable impact sensitivity and rollover angles
-- **Buzzer Alerts**: Audible notifications for accidents
-- **LED Status Indicators**: Visual WiFi connection status
-- **EEPROM Configuration**: Persistent settings storage
-- **NTP Time Synchronization**: Accurate timestamping
-- **GSM Module Support**: SIM800L for SMS functionality
-- **Multi-protocol Command Interface**: Serial, SMS, and MQTT configuration
+- **Modular C++ Design (OOD)**: Decoupled hardware managers for high scalability.
+- **Configurable Sensitivity**: Adjustable impact sensitivity and rollover angles.
+- **Buzzer Alerts**: Audible notifications for accidents.
+- **LED Status Indicators**: Visual WiFi connection status.
+- **LittleFS JSON Configuration**: Persistent settings stored as JSON (modern alternative to EEPROM).
+- **NTP Time Synchronization**: Accurate timestamping for event logs.
+- **GSM Module Support**: SIM800L with automated command processing.
+- **Multi-protocol Command Interface**: Serial, SMS, and MQTT configuration callbacks.
 
 ## Hardware Requirements
 
@@ -89,11 +109,12 @@ This system uses an ESP8266 microcontroller to monitor vehicle movements in real
   - `SoftwareSerial`
 
 ### Setup Steps
-1. Clone the repository
-2. Install required libraries
-3. Configure hardware connections
-4. Update configuration in `config.h`
-5. Upload firmware to ESP8266
+1. Clone the repository.
+2. Install required libraries.
+3. Configure hardware connections.
+4. Update configuration in `config.h`.
+5. **Upload Data Folder**: Use the "ESP8266 LittleFS Data Upload" tool to upload the `data` folder to the ESP8266.
+6. **Flash Firmware**: Upload the sketch to your ESP8266.
 
 ## Configuration Commands
 
@@ -145,7 +166,6 @@ STATUS or ESTADO               # System status
 LOCATION or UBICACION or LOC   # Current GPS location
 CONFIG or CONFIGURACION        # Current configuration
 TEST or TEST_SMS               # Test SMS to emergency number
-AUTH [código]                  # Temporarily authorize a number
 ```
 
 #### SMS Configuration Commands
@@ -165,7 +185,6 @@ GPS                            # GPS status
 GSM                            # GSM module status
 MQTT                           # MQTT status
 RESET or REINICIAR             # Restart device
-SAVE or GUARDAR                # Save configuration to EEPROM
 ```
 
 ### 3. MQTT Commands
@@ -238,18 +257,19 @@ LOCATION     # Get location
 
 ### Configuration Persistence
 
-- **EEPROM Storage**: Configuration is automatically saved to EEPROM with `save`
-- **Auto-Load**: Loaded automatically on startup
-- **Validation**: Range validation and `CFG` marker verification before loading
-- **Backup**: Preserves previous configuration in case of invalid values or corrupted EEPROM
+- **LittleFS Storage (v0.0.5)**: Configuration is now stored in a `config.json` file. This provides atomic writes and human-readable settings via the file system.
+- **EEPROM Migration**: The system has transitioned from raw EEPROM addresses to the LittleFS filesystem for improved reliability and data integrity.
+- **Auto-Load**: Current settings are automatically loaded from `/config.json` on startup.
+- **Validation**: Strict range validation is performed before any change is persisted.
+- **Data Upload**: Remember to upload the `data` folder using the **ESP8266 LittleFS Data Upload** tool before the first run.
 
 ### Important Notes
 
-1. **SMS Authorization**: Only the configured emergency number can send SMS commands
-2. **Phone Format**: Number must have at least 10 digits, can include `+`, spaces, dashes
-3. **Restart Required**: Some changes require restart to fully apply
-4. **Confirmation**: All successful changes generate confirmation via MQTT/SMS/Serial
-5. **Security**: Use SMS `AUTH [code]` to temporarily authorize other numbers
+1. **Modular Architecture**: Commands are now handled via a clean callback system (`onSmsReceived`, `onMqttEvent`), making the system highly extensible.
+2. **SMS Authorization**: Only the configured emergency number can send SMS commands.
+3. **Phone Format**: Numbers must have at least 10 digits and can include `+`, spaces, and dashes.
+4. **Restart Required**: Certain changes require a restart to be fully applied to hardware modules.
+5. **Confirmation**: Successful configuration changes trigger confirmations via MQTT/SMS/Serial.
 
 ### Advanced Diagnostic Commands
 
@@ -268,7 +288,7 @@ struct AccidentConfig {
   int sensitivity = 2000;        // Impact sensitivity threshold
   int rollover_angle = 60;       // Rollover detection angle
   unsigned long alert_delay = 30000; // Alert delay in milliseconds
-  char emergency_phone[21] = "+18290000000"; // Emergency contact number
+  String emergency_phone = "+18290000000"; // Emergency contact number
   bool sms_enabled = true;       // Enable/disable SMS alerts
 };
 ```
@@ -327,7 +347,7 @@ The system publishes structured JSON events:
     "MacAddress": "AA:BB:CC:DD:EE:FF",
     "IPAddress": "192.168.1.100",
     "ChipType": "ESP8266",
-    "FirmwareVersion": "v0.0.5"
+    "FirmwareVersion": "v0.0.4"
   },
   "Timestamp": "2024-01-15T10:30:45.123Z",
   "Details": {
