@@ -145,6 +145,7 @@ STATUS or ESTADO               # System status
 LOCATION or UBICACION or LOC   # Current GPS location
 CONFIG or CONFIGURACION        # Current configuration
 TEST or TEST_SMS               # Test SMS to emergency number
+AUTH [código]                  # Temporarily authorize a number
 ```
 
 #### SMS Configuration Commands
@@ -164,6 +165,7 @@ GPS                            # GPS status
 GSM                            # GSM module status
 MQTT                           # MQTT status
 RESET or REINICIAR             # Restart device
+SAVE or GUARDAR                # Save configuration to EEPROM
 ```
 
 ### 3. MQTT Commands
@@ -238,8 +240,8 @@ LOCATION     # Get location
 
 - **EEPROM Storage**: Configuration is automatically saved to EEPROM with `save`
 - **Auto-Load**: Loaded automatically on startup
-- **Validation**: Range validation before saving
-- **Backup**: Preserves previous configuration in case of invalid values
+- **Validation**: Range validation and `CFG` marker verification before loading
+- **Backup**: Preserves previous configuration in case of invalid values or corrupted EEPROM
 
 ### Important Notes
 
@@ -266,7 +268,7 @@ struct AccidentConfig {
   int sensitivity = 2000;        // Impact sensitivity threshold
   int rollover_angle = 60;       // Rollover detection angle
   unsigned long alert_delay = 30000; // Alert delay in milliseconds
-  String emergency_phone = "+18290000000"; // Emergency contact number
+  char emergency_phone[21] = "+18290000000"; // Emergency contact number
   bool sms_enabled = true;       // Enable/disable SMS alerts
 };
 ```
@@ -325,7 +327,7 @@ The system publishes structured JSON events:
     "MacAddress": "AA:BB:CC:DD:EE:FF",
     "IPAddress": "192.168.1.100",
     "ChipType": "ESP8266",
-    "FirmwareVersion": "v0.0.4"
+    "FirmwareVersion": "v0.0.5"
   },
   "Timestamp": "2024-01-15T10:30:45.123Z",
   "Details": {
