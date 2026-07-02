@@ -1,0 +1,7 @@
+{
+  "sensitivity": 2000,
+  "rollover_angle": 60,
+  "alert_delay": 30000,
+  "sms_enabled": true,
+  "emergency_phone": "+18296741199"
+}

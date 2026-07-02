@@ -28,24 +28,85 @@ A comprehensive IoT-based vehicle accident detection system that monitors vehicl
 
 This system uses an ESP8266 microcontroller to monitor vehicle movements in real-time. It detects accidents through impact analysis and rollover detection using an MPU6050 accelerometer/gyroscope, tracks location via GPS, and automatically sends emergency notifications through MQTT and SMS alerts.
 
-### System Evolution (v0.0.5)
-The project has evolved from a monolithic prototype to an **Modular System**. This overhaul decouples hardware management into specialized C++ modules, ensuring higher reliability, better memory management, and cleaner code maintenance.
+### System Evolution
+The project evolved from a monolithic prototype → a modular sketch (v0.0.5) →
+a **PlatformIO Clean Architecture** project. The latest overhaul organizes the
+firmware into four layers with dependencies pointing **inward only**
+(Presentation → Application → Domain, and Infrastructure → Domain; the Domain
+layer depends on nothing), delivering higher reliability, testable business
+logic, and hardware that can be swapped without touching the core.
 
-## Project Structure
+## Architecture
 
-The codebase is organized into functional modules to ensure a clear Separation of Concerns (SoC):
+The firmware is organized into four layers under `src/`:
 
-| Module/File | Function |
-|-------------|----------|
-| `GPS.ino` | Main system orchestrator and event dispatcher. |
-| `AccidentMonitor` | MPU6050 logic, vibration filtering, and accident detection. |
-| `GpsModule` | GPS stream acquisition and location parsing (TinyGPSPlus). |
-| `GsmModule` | SIM800L management, SMS command parsing, and alerting. |
-| `MqttClientModule` | Secure MQTTS communication and remote configuration. |
-| `DeviceConfig` | JSON-based persistent storage management using LittleFS. |
-| `SysUtils` | System utilities: NTP sync, ISO timestamps, and Base64. |
-| `Types.h` | Shared structures and system-wide data types. |
-| `config.h` | Global hardware pins, constants, and fixed settings. |
+```
+src/
+├── domain/                         # Enterprise rules — no hardware, no libs
+│   ├── entities/
+│   │   ├── AccidentEvent.h         # (hardware-free, host-testable)
+│   │   ├── GpsLocation.h
+│   │   ├── DeviceInfo.h
+│   │   └── SystemTypes.h           # WiFiStatus, OTAContext
+│   └── interfaces/                 # Pure abstractions (ports)
+│       ├── IGpsProvider.h
+│       ├── IGsmAlertSender.h
+│       ├── IMqttTransport.h
+│       ├── IAccidentDetector.h
+│       ├── IConfigRepository.h
+│       └── IClock.h
+│
+├── application/                    # Use cases — depends only on interfaces
+│   ├── AccidentAlgorithm.{h,cpp}   # Pure STA/LTA + rollover math (host-tested)
+│   └── services/
+│       └── AccidentService.{h,cpp} # Orchestrates detect → alert → publish
+│
+├── infrastructure/                 # Adapters — concrete impls of the ports
+│   ├── gps/TinyGpsPlusProvider.{h,cpp}
+│   ├── gsm/Sim800lAlertSender.{h,cpp}
+│   ├── mqtt/PubSubClientTransport.{h,cpp}
+│   ├── sensors/Mpu6050Detector.{h,cpp}
+│   ├── persistence/LittleFsConfigRepository.{h,cpp}
+│   └── system/{EspClock,EspSysUtils}.{h,cpp}
+│
+└── main.cpp                        # Presentation / composition root
+
+include/config.h                    # Shared pins & constants (global)
+test/test_accident_algorithm/       # Native unit tests (no hardware)
+data/config.json                    # Default LittleFS config (uploadfs)
+legacy/                             # Original flat sketch (kept, NOT compiled)
+```
+
+### Key ideas
+
+- **Dependency inversion.** `AccidentService` and `Mpu6050Detector` never name a
+  concrete class; they receive `IGpsProvider`, `IGsmAlertSender`,
+  `IMqttTransport`, `IConfigRepository` and `IClock` through their constructors.
+  Only `main.cpp` (the composition root) wires the concrete implementations
+  together.
+- **Swappable adapters.** Changing the GPS chip (NEO-6M → NEO-8M) or the GSM
+  modem (SIM800L → SIM7600) means writing one new class in `infrastructure/` and
+  changing one line in `main.cpp` — no business-logic changes.
+- **Testable core.** `AccidentAlgorithm` was split out of the MPU6050 driver so
+  the impact/rollover logic runs on the host with no hardware. See
+  `test/test_accident_algorithm/`.
+
+### Legacy module mapping
+
+The original flat modules were reorganized into the layers above (the old files
+remain under `legacy/` for reference and are not compiled):
+
+| Legacy file          | Now lives in                                                        |
+|----------------------|---------------------------------------------------------------------|
+| `GPS.ino`            | `src/main.cpp` (composition root)                                   |
+| `Types.h`            | `src/domain/entities/*` + `SystemTypes.h`                           |
+| `config.h`           | `include/config.h`                                                  |
+| `AccidentMonitor.*`  | `src/infrastructure/sensors/Mpu6050Detector.*` + `src/application/AccidentAlgorithm.*` |
+| `GpsModule.*`        | `src/infrastructure/gps/TinyGpsPlusProvider.*`                      |
+| `GsmModule.*`        | `src/infrastructure/gsm/Sim800lAlertSender.*`                       |
+| `MqttClientModule.*` | `src/infrastructure/mqtt/PubSubClientTransport.*`                   |
+| `DeviceConfig.*`     | `src/infrastructure/persistence/LittleFsConfigRepository.*`         |
+| `SysUtils.*`         | `src/infrastructure/system/EspClock.*` + `EspSysUtils.*`            |
 
 ## Features
 
@@ -97,24 +158,49 @@ The codebase is organized into functional modules to ensure a clear Separation o
 
 ## Installation
 
+This is a **PlatformIO** project. Use the PlatformIO IDE extension (VS Code) or
+the `pio` CLI. Dependencies are declared in `platformio.ini` and fetched
+automatically — no manual library installation needed.
+
 ### Prerequisites
-- Arduino IDE with ESP8266 support
-- Required libraries:
-  - `ESP8266WiFi`
-  - `WiFiManager`
-  - `PubSubClient`
-  - `ArduinoJson`
-  - `TinyGPSPlus`
-  - `MPU6050`
-  - `SoftwareSerial`
+- [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html) (CLI) or the PlatformIO IDE extension for VS Code
+- Library dependencies (auto-installed from `platformio.ini`):
+  - `mikalhart/TinyGPSPlus`
+  - `knolleary/PubSubClient`
+  - `bblanchon/ArduinoJson` (v6)
+  - `electroniccats/MPU6050`
+- `SoftwareSerial`, `ESP8266WiFi`, `WiFiClientSecure`, `ArduinoOTA`, `LittleFS`
+  and `EEPROM` ship with the ESP8266 Arduino core and are **not** listed in
+  `lib_deps`.
 
 ### Setup Steps
-1. Clone the repository.
-2. Install required libraries.
-3. Configure hardware connections.
-4. Update configuration in `config.h`.
-5. **Upload Data Folder**: Use the "ESP8266 LittleFS Data Upload" tool to upload the `data` folder to the ESP8266.
-6. **Flash Firmware**: Upload the sketch to your ESP8266.
+1. Clone the repository and open the `GPS` folder in VS Code (PlatformIO) or a terminal.
+2. Configure hardware connections (see [Pin Configuration](#pin-configuration)).
+3. Update settings in `include/config.h` (WiFi certificate, MQTT server, pins).
+4. Build, upload the filesystem, and flash the firmware (commands below).
+
+### Build & test
+
+```bash
+pio run                 # build firmware for nodemcuv2 (ESP8266)
+pio run -t upload       # flash firmware
+pio run -t uploadfs     # upload data/ (config.json) to LittleFS
+pio test -e native      # run host unit tests for AccidentAlgorithm (needs a host GCC — MinGW-w64 on Windows, or WSL)
+pio device monitor      # serial monitor @ 115200
+```
+
+### Notes / deviations from the original sketch
+
+1. `MQTT_TOPIC_CONFIG` was **referenced but never defined** in the original
+   `config.h` (the sketch would not compile as-is). It is now defined in
+   `include/config.h` as the PROGMEM `"config"` topic — adjust if needed.
+2. The original `loop()` passed an always-empty `GPSData` to the SMS alert, so
+   alerts never carried a location. `AccidentService::process()` now reads the
+   live fix from `IGpsProvider` before alerting. This is a behavior change (an
+   intentional bug fix); revert inside `AccidentService.cpp` if undesired.
+3. `Serial`/OTA command handling beyond the `STATUS` SMS was not present in the
+   original `loop()` and was **not invented** here. The command set documented
+   below is a natural follow-up to wire into a dedicated `CommandRouter`.
 
 ## Configuration Commands
 
@@ -444,7 +530,7 @@ If commands don't work:
 5. Check serial logs for specific errors
 
 ### Debug Mode
-Enable debug output by defining `ENABLE_DEBUG` in `config.h`:
+Enable debug output by defining `ENABLE_DEBUG` in `include/config.h`:
 ```cpp
 #define ENABLE_DEBUG
 ```
