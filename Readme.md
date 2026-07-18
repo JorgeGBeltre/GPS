@@ -614,16 +614,22 @@ Licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
 Author: **Jorge Gaspar Beltre Rivera**  
 Project: **GPS Accident Detection System - ESP8266**
 
- [![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/JorgeGBeltre)
- [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jorge-gaspar-beltre-rivera/)
- [![Email](https://img.shields.io/badge/Email-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:Jorgegaspar3021@gmail.com)
+<p align="center">
+  <a href="https://www.linkedin.com/in/jorge-gaspar-beltre-rivera/" target="_blank"><img src="https://user-images.githubusercontent.com/74038190/235294012-0a55e343-37ad-4b0f-924f-c8431d9d2483.gif" alt="LinkedIn" width="100"></a>
+  <a href="https://github.com/JorgeGBeltre" target="_blank"><img src="https://user-images.githubusercontent.com/74038190/212257468-1e9a91f1-b626-4baa-b15d-5c385dfa7ed2.gif" alt="GitHub" width="100"></a>
+  <a href="mailto:Jorgegaspar3021@gmail.com"><img src="https://user-images.githubusercontent.com/74038190/216122065-2f028bae-25d6-4a3c-bc9f-175394ed5011.png" alt="E-Mail" width="100"></a>
 
----
+</p>
 
-##  Support
+## Support
 
-This project is developed independently.
+This project is developed independently. Even a small contribution helps me dedicate more time to development, testing, and releasing new features.
 
-Even a small contribution helps me dedicate more time to development, testing, and releasing new features.
 
- [![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.paypal.com/donate/?hosted_button_id=2VLA8BWT967LU)
+ <p align="center">
+  <a href="https://www.paypal.com/donate/?hosted_button_id=2VLA8BWT967LU">
+    <img src="https://www.paypalobjects.com/webstatic/icon/pp258.png"
+         alt="Donate with PayPal"
+         height="60">
+  </a>
+</p>
