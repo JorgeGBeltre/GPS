@@ -30,7 +30,7 @@ void PubSubClientTransport::mqttCallbackWrapper(char *topic, byte *payload,
   if (topicStr == deviceEventTopic) {
     if (s_instance->eventCallback)
       s_instance->eventCallback(message);
-  } else if (strcmp_P(topicStr.c_str(), MQTT_TOPIC_CONFIG) == 0) {
+  } else if (topicStr == String(FPSTR(MQTT_TOPIC_CONFIG)) + "/" + s_instance->m_chipId) {
     if (s_instance->configCallback)
       s_instance->configCallback(message);
   }
@@ -115,9 +115,11 @@ bool PubSubClientTransport::connectMQTT() {
 
     String deviceEventTopic = "event/" + m_chipId;
     mqtt_client.subscribe(deviceEventTopic.c_str());
-    char configTopic[16];
-    strncpy_P(configTopic, MQTT_TOPIC_CONFIG, sizeof(configTopic));
-    mqtt_client.subscribe(configTopic);
+    // Topico de configuracion CON ambito por dispositivo. Antes era el literal "config",
+    // compartido por todos los equipos: cualquiera suscrito recibia la configuracion de los
+    // demas, y el broker no puede autorizar por propiedad un topico sin identificador.
+    String configTopic = String(FPSTR(MQTT_TOPIC_CONFIG)) + "/" + m_chipId;
+    mqtt_client.subscribe(configTopic.c_str());
 
     return true;
   }
