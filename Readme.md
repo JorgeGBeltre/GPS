@@ -55,6 +55,10 @@ logic, and hardware that can be swapped without touching the core.
 | **Quick Pairing (`SmartConfig`)** | Triggered on unprovisioned first boot or immediately upon holding the physical button (`GPIO 0`) for `5.0 s` without waiting for button release |
 | **SoftAP Captive Portal (`VESIS-<ChipID>`)** | Stage 2 pairing portal triggered by a 2nd `5.0 s` long press (or initial boot fallback), exposing both the HTML captive portal and Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) on `VESIS-<ChipID>` (`12345678`) |
 | **LittleFS Persistence (`/config.json`)** | Persists Wi-Fi credentials (`wifi_ssid`, `wifi_pass`), cellular `apn`, MQTT broker (`mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`), `sled_online`, `emergency_phone`, `sms_enabled`, `sensitivity`, `rollover_angle`, and `alert_delay` |
+| **Harsh Driving & Peak-G Vector (`GTHBM` / `GTCRA`)** | Evaluates 3-axis peak G-force magnitude (`peak_g`), harsh braking (`harsh_braking`), harsh acceleration (`harsh_acceleration`), harsh cornering (`harsh_cornering`), and virtual ignition (`virtual_ignition`) |
+| **Static GPS Drift Filter & Tow Detection (`GTRDF` / `GTTOW`)** | Pins stationary coordinates within a `30 m` anchor radius (`< 3.0 km/h`) and detects unauthorized parked towing (`> 100 m` displacement) |
+| **MCC/MNC Carrier Auto-APN & Jamming Detection (`GTJDC`)** | Auto-resolves the SIM800L carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming |
+| **Offline Alert Ring-Buffer (`+BUFF`)** | Queues up to `8` telemetry/accident messages in `PubSubClientTransport` when Wi-Fi/MQTT is disconnected and automatically flushes them upon reconnection |
 | **Cryptographic Utilities (`CryptoUtils`)** | Pure C++ `MD5`, `AES-128-CBC` with PKCS#7 padding, and `Base64` primitives in the Application layer |
 
 ---
@@ -83,6 +87,14 @@ logic, and hardware that can be swapped without touching the core.
   - `runPairingWorkflow()`
 - `LittleFsConfigRepository` ([`LittleFsConfigRepository.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/persistence/LittleFsConfigRepository.cpp)):
   - Persists `wifi_ssid`, `wifi_pass`, `apn`, `mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`, and `sled_online` alongside accident detection thresholds in `/config.json`.
+- `AccidentAlgorithm` & `Mpu6050Detector` ([`AccidentAlgorithm.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/application/AccidentAlgorithm.cpp), [`Mpu6050Detector.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/sensors/Mpu6050Detector.cpp)):
+  - `peak_g`, `harsh_braking`, `harsh_acceleration`, `harsh_cornering`, and `virtual_ignition` evaluation.
+- `TinyGpsPlusProvider` ([`TinyGpsPlusProvider.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/gps/TinyGpsPlusProvider.cpp)):
+  - Static GPS Drift Filter (`GTRDF`, `30 m` radius when `< 3.0 km/h`) and Parked Tow Detection (`GTTOW`, `>= 100 m` displacement).
+- `Sim800lAlertSender` ([`Sim800lAlertSender.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/gsm/Sim800lAlertSender.cpp)):
+  - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup) and `isJammingDetected()` (`GTJDC` RF jamming check).
+- `PubSubClientTransport` ([`PubSubClientTransport.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/mqtt/PubSubClientTransport.cpp)):
+  - `enqueueOffline()` and `flushOfflineQueue()` (`+BUFF` 8-slot offline alert store-and-forward buffer).
 - `updateConnectivityIndicator()` in [`main.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/main.cpp).
 
 ---

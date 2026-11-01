@@ -76,6 +76,24 @@ AccidentSample AccidentAlgorithm::evaluate(int16_t ax, int16_t ay, int16_t az,
   const float ayf = ay / kAccelLsbPerG;
   const float azf = az / kAccelLsbPerG;
 
+  // Peak 3-axis G-force vector magnitude (GTCRA acce_squares_root)
+  sample.peak_g = std::sqrt(axf * axf + ayf * ayf + azf * azf);
+
+  // Virtual ignition state (GTAVS / GTVVS: vibration + speed correlation)
+  sample.virtual_ignition = (rawMag >= 180.0f) || (speedKmph >= 3.0f);
+
+  // Harsh Driving Behavior Monitoring (GTHBM)
+  if (!sample.impact_detected && speedKmph >= 10.0f) {
+    if (axf <= -0.48f) {
+      sample.harsh_braking = true;
+    } else if (axf >= 0.43f) {
+      sample.harsh_acceleration = true;
+    }
+    if (speedKmph >= 15.0f && std::fabs(ayf) >= 0.45f) {
+      sample.harsh_cornering = true;
+    }
+  }
+
   const float roll =
       std::atan2(ayf, std::sqrt(axf * axf + azf * azf)) * 180.0f / kPi;
   const float pitch =

@@ -7,9 +7,8 @@
 #include "domain/interfaces/IConfigRepository.h"
 #include "domain/interfaces/IGsmAlertSender.h"
 
-// IGsmAlertSender backed by a SIM800L modem. Formerly GsmModule. The emergency
-// phone / sms_enabled flag are read from the injected IConfigRepository instead
-// of a global singleton.
+// IGsmAlertSender backed by a SIM800L modem with MCC/MNC automatic APN lookup
+// and cellular RF jamming detection (GTJDC).
 class Sim800lAlertSender : public IGsmAlertSender {
 public:
   Sim800lAlertSender(uint8_t rxPin, uint8_t txPin, IConfigRepository &config);
@@ -23,19 +22,26 @@ public:
   bool isResponsive() override;
 
   void checkStatus();
+  bool isJammingDetected() const { return jammingDetected_; }
+  const String &resolvedApn() const { return resolvedApn_; }
 
 private:
   bool sendATCommand(const String &command, const String &expectedResponse,
                      unsigned long timeoutMs);
+  String queryATResponse(const String &command, unsigned long timeoutMs);
+  String autoResolveCarrierApn();
   void processReceivedSms();
 
   IConfigRepository &m_config;
   SoftwareSerial sim800;
   SmsCommandCallback commandCallback;
   String currentAuthCode;
+  String resolvedApn_;
 
   int smsAuthFailCount;
   unsigned long smsLockoutStart;
+  int lastRssiCsq_ = 0;
+  bool jammingDetected_ = false;
 
   String smsBuffer;
   bool enSMS;

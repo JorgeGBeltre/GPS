@@ -10,9 +10,17 @@
 #include "domain/interfaces/IConfigRepository.h"
 #include "domain/interfaces/IMqttTransport.h"
 
-// IMqttTransport backed by PubSubClient over TLS. Formerly MqttClientModule.
+// IMqttTransport backed by PubSubClient over TLS with an 8-slot offline alert
+// ring-buffer (+BUFF style store-and-forward when Wi-Fi/MQTT is disconnected).
 class PubSubClientTransport : public IMqttTransport {
 public:
+  static constexpr size_t OFFLINE_QUEUE_CAPACITY = 8;
+
+  struct BufferedMqttFrame {
+    String topic;
+    String payload;
+  };
+
   explicit PubSubClientTransport(IConfigRepository &config);
 
   void begin(const String &chipId) override;
@@ -21,9 +29,12 @@ public:
   void setEventCallback(MqttEventCallback cb) override;
   void setConfigCallback(MqttConfigCallback cb) override;
   bool isConnected() override;
+  size_t bufferedCount() const { return queueCount_; }
 
 private:
   bool connectMQTT();
+  void enqueueOffline(const char *topic, const char *message);
+  void flushOfflineQueue();
   static void mqttCallbackWrapper(char *topic, byte *payload,
                                   unsigned int length);
 
@@ -41,6 +52,10 @@ private:
   int mqttFailCount;
   WiFiStatus currentWiFiStatus;
   unsigned long previousMillis;
+
+  BufferedMqttFrame offlineQueue_[OFFLINE_QUEUE_CAPACITY];
+  size_t queueHead_ = 0;
+  size_t queueCount_ = 0;
 
   MqttEventCallback eventCallback;
   MqttConfigCallback configCallback;

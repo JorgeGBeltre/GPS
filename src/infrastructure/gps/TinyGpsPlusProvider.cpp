@@ -28,13 +28,44 @@ void TinyGpsPlusProvider::update() {
 void TinyGpsPlusProvider::readData(GpsLocation &data) {
   data.isValid = gps.location.isValid();
   if (data.isValid) {
-    data.latitude = gps.location.lat();
-    data.longitude = gps.location.lng();
-    data.altitude = gps.altitude.meters();
-    data.speed = gps.speed.kmph();
-    data.course = gps.course.deg();
-    data.satellites = gps.satellites.value();
+    double rawLat = gps.location.lat();
+    double rawLon = gps.location.lng();
+    float speedKmh = gps.speed.kmph();
 
+    data.altitude = gps.altitude.meters();
+    data.speed = speedKmh;
+    data.course = gps.course.deg();
+    data.hdop = gps.hdop.isValid() ? static_cast<float>(gps.hdop.hdop()) : 99.9f;
+    data.satellites = gps.satellites.value();
+    data.driftFiltered = false;
+    data.towDetected = false;
+
+    if (!hasAnchor_) {
+      hasAnchor_ = true;
+      anchorLat_ = rawLat;
+      anchorLon_ = rawLon;
+    }
+
+    double distFromAnchorM = TinyGPSPlus::distanceBetween(
+        anchorLat_, anchorLon_, rawLat, rawLon);
+
+    // Static GPS Drift Filter (GTRDF): pin stationary coordinates within 30 m
+    if (speedKmh < 3.0f && distFromAnchorM <= 30.0) {
+      data.latitude = anchorLat_;
+      data.longitude = anchorLon_;
+      data.driftFiltered = true;
+    } else {
+      data.latitude = rawLat;
+      data.longitude = rawLon;
+      // Parked Tow Detection (GTTOW): displacement > 100 m while low/parked speed
+      if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
+        data.towDetected = true;
+      }
+      if (speedKmh >= 5.0f || distFromAnchorM > 30.0) {
+        anchorLat_ = rawLat;
+        anchorLon_ = rawLon;
+      }
+    }
   } else {
     static unsigned long lastGPSWarning = 0;
     if (millis() - lastGPSWarning > 30000) {

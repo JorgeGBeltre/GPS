@@ -43,7 +43,12 @@ bool Mpu6050Detector::check(AccidentEvent &outAccident,
 
   outAccident.impact_detected = sample.impact_detected;
   outAccident.rollover_detected = sample.rollover_detected;
+  outAccident.harsh_braking = sample.harsh_braking;
+  outAccident.harsh_acceleration = sample.harsh_acceleration;
+  outAccident.harsh_cornering = sample.harsh_cornering;
+  outAccident.virtual_ignition = sample.virtual_ignition;
   outAccident.impact_magnitude = sample.impact_magnitude;
+  outAccident.peak_g = sample.peak_g;
   outAccident.roll_angle = sample.roll_angle;
   outAccident.pitch_angle = sample.pitch_angle;
 

@@ -106,12 +106,16 @@ void PubSubClientTransport::update() {
         lastReconnectAttempt = now;
         if (connectMQTT()) {
           mqttFailCount = 0;
+          flushOfflineQueue();
         } else {
           mqttFailCount = min(mqttFailCount + 1, 5);
         }
       }
     } else {
       mqtt_client.loop();
+      if (queueCount_ > 0) {
+        flushOfflineQueue();
+      }
     }
   }
 }
@@ -131,9 +135,6 @@ bool PubSubClientTransport::connectMQTT() {
 
     String deviceEventTopic = "event/" + m_chipId;
     mqtt_client.subscribe(deviceEventTopic.c_str());
-    // Topico de configuracion CON ambito por dispositivo. Antes era el literal "config",
-    // compartido por todos los equipos: cualquiera suscrito recibia la configuracion de los
-    // demas, y el broker no puede autorizar por propiedad un topico sin identificador.
     String configTopic = String(FPSTR(MQTT_TOPIC_CONFIG)) + "/" + m_chipId;
     mqtt_client.subscribe(configTopic.c_str());
 
@@ -142,10 +143,39 @@ bool PubSubClientTransport::connectMQTT() {
   return false;
 }
 
+void PubSubClientTransport::enqueueOffline(const char *topic,
+                                           const char *message) {
+  size_t slot = (queueHead_ + queueCount_) % OFFLINE_QUEUE_CAPACITY;
+  if (queueCount_ == OFFLINE_QUEUE_CAPACITY) {
+    queueHead_ = (queueHead_ + 1) % OFFLINE_QUEUE_CAPACITY;
+  } else {
+    queueCount_++;
+  }
+  offlineQueue_[slot].topic = String(topic);
+  offlineQueue_[slot].payload = String(message);
+  LOG_INFO("Alerta almacenada en buffer offline (+BUFF)");
+}
+
+void PubSubClientTransport::flushOfflineQueue() {
+  while (queueCount_ > 0 && mqtt_client.connected()) {
+    const auto &item = offlineQueue_[queueHead_];
+    if (!mqtt_client.publish(item.topic.c_str(), item.payload.c_str())) {
+      break;
+    }
+    queueHead_ = (queueHead_ + 1) % OFFLINE_QUEUE_CAPACITY;
+    queueCount_--;
+    mqtt_client.loop();
+  }
+}
+
 void PubSubClientTransport::publish(const char *topic, const char *message) {
-  if (!mqttConnected)
+  if (!mqttConnected || !mqtt_client.connected()) {
+    enqueueOffline(topic, message);
     return;
-  mqtt_client.publish(topic, message);
+  }
+  if (!mqtt_client.publish(topic, message)) {
+    enqueueOffline(topic, message);
+  }
 }
 
 bool PubSubClientTransport::isConnected() { return mqttConnected; }

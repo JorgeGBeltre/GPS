@@ -2,6 +2,35 @@
 
 #include "config.h"
 
+namespace {
+struct CarrierApnEntry {
+  const char *mccMncPrefix;
+  const char *apn;
+};
+
+constexpr CarrierApnEntry kCarrierApnTable[] = {
+    {"37001", "internet.orange.com.do"},
+    {"37002", "internet.claro.com.do"},
+    {"37003", "avircom.net"},
+    {"37004", "data.viva.com.do"},
+    {"334020", "internet.itelcel.com"},
+    {"33403", "internet.movistar.mx"},
+    {"732101", "internet.comcel.com.co"},
+    {"732103", "web.colombiamovil.com.co"},
+    {"732123", "internet.movistar.com.co"},
+    {"71606", "movistar.pe"},
+    {"71610", "claro.pe"},
+    {"73001", "bam.entelpcs.cl"},
+    {"73002", "wap.tmovil.cl"},
+    {"72207", "wap.gprs.unifon.com.ar"},
+    {"722310", "igprs.claro.com.ar"},
+    {"310260", "fast.t-mobile.com"},
+    {"310410", "broadband"},
+    {"21401", "airtelnet.es"},
+    {"21407", "movistar.es"},
+};
+} // namespace
+
 Sim800lAlertSender::Sim800lAlertSender(uint8_t rxPin, uint8_t txPin,
                                        IConfigRepository &config)
     : m_config(config), sim800(rxPin, txPin) {
@@ -10,6 +39,36 @@ Sim800lAlertSender::Sim800lAlertSender(uint8_t rxPin, uint8_t txPin,
   smsLockoutStart = 0;
   enSMS = false;
   lastByteTime = 0;
+}
+
+String Sim800lAlertSender::queryATResponse(const String &command,
+                                           unsigned long timeoutMs) {
+  while (sim800.available())
+    sim800.read();
+  sim800.println(command);
+  unsigned long startTime = millis();
+  String response = "";
+  while (millis() - startTime < timeoutMs) {
+    while (sim800.available()) {
+      response += static_cast<char>(sim800.read());
+    }
+    if (response.indexOf("OK") >= 0 || response.indexOf("ERROR") >= 0)
+      break;
+    delay(10);
+  }
+  response.trim();
+  return response;
+}
+
+String Sim800lAlertSender::autoResolveCarrierApn() {
+  String imsiResp = queryATResponse("AT+CIMI", 1500);
+  for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]);
+       ++i) {
+    if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) >= 0) {
+      return String(kCarrierApnTable[i].apn);
+    }
+  }
+  return "";
 }
 
 void Sim800lAlertSender::begin(const String &initialAuthCode) {
@@ -25,8 +84,13 @@ void Sim800lAlertSender::begin(const String &initialAuthCode) {
   sendATCommand("ATE0", "OK", 2000);
   sendATCommand("AT+CMGF=1", "OK", 2000);
   sendATCommand("AT+CNMI=2,2,0,0,0", "OK", 2000);
-  if (strlen(m_config.config().apn) > 0) {
-    String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + m_config.config().apn + "\"";
+
+  resolvedApn_ = String(m_config.config().apn);
+  if (resolvedApn_.length() == 0) {
+    resolvedApn_ = autoResolveCarrierApn();
+  }
+  if (resolvedApn_.length() > 0) {
+    String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + resolvedApn_ + "\"";
     sendATCommand(cgdcont, "OK", 2000);
   }
   LOG_INFO("Módulo GSM inicializado para recibir SMS");
@@ -184,6 +248,27 @@ void Sim800lAlertSender::checkStatus() {
     if (!isResponsive()) {
       LOG_WARN("Reiniciando comunicación GSM...");
       begin(currentAuthCode);
+    } else {
+      // Cellular RF Jamming Detection (GTJDC): monitor abrupt signal loss + CREG drop
+      String csqResp = queryATResponse("AT+CSQ", 1000);
+      int csqIdx = csqResp.indexOf("+CSQ:");
+      if (csqIdx >= 0) {
+        int commaIdx = csqResp.indexOf(",", csqIdx);
+        if (commaIdx > csqIdx) {
+          int csq = csqResp.substring(csqIdx + 5, commaIdx).toInt();
+          String cregResp = queryATResponse("AT+CREG?", 1000);
+          bool registered =
+              (cregResp.indexOf(",1") >= 0 || cregResp.indexOf(",5") >= 0);
+          if (lastRssiCsq_ >= 12 && (csq == 0 || csq == 99) && !registered) {
+            jammingDetected_ = true;
+            LOG_WARN("Posible interferencia RF GSM detectada (GTJDC)");
+          } else if (registered && csq >= 5 && csq != 99) {
+            jammingDetected_ = false;
+          }
+          if (csq != 99)
+            lastRssiCsq_ = csq;
+        }
+      }
     }
     lastCheck = millis();
   }
@@ -222,9 +307,11 @@ void Sim800lAlertSender::sendAlert(const AccidentEvent &accident,
 
   String sms_data = "ALERTA ACCIDENTE\r\n";
   if (accident.impact_detected)
-    sms_data += "Tipo: IMPACTO\r\n";
+    sms_data += "Tipo: IMPACTO (" + String(accident.peak_g, 2) + "g)\r\n";
   if (accident.rollover_detected)
     sms_data += "Tipo: VUELCO\r\n";
+  if (accident.tow_detected || gps.towDetected)
+    sms_data += "Tipo: REMOLQUE NO AUTORIZADO\r\n";
 
   if (gps.isValid) {
     sms_data += "Ubic: http://maps.google.com/maps?q=loc:";

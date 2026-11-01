@@ -7,7 +7,8 @@
 
 #include "domain/interfaces/IGpsProvider.h"
 
-// IGpsProvider backed by TinyGPSPlus over SoftwareSerial. Formerly GpsModule.
+// IGpsProvider backed by TinyGPSPlus over SoftwareSerial with Static Drift
+// Filtering (GTRDF) and Parked Tow Detection (GTTOW).
 class TinyGpsPlusProvider : public IGpsProvider {
 public:
   TinyGpsPlusProvider(uint8_t rxPin, uint8_t txPin);
@@ -23,6 +24,9 @@ public:
 private:
   TinyGPSPlus gps;
   SoftwareSerial gpsSerial;
+  bool hasAnchor_ = false;
+  double anchorLat_ = 0.0;
+  double anchorLon_ = 0.0;
 };
 
 #endif // INFRA_TINYGPSPLUSPROVIDER_H

@@ -17,7 +17,12 @@ struct AccidentSample {
   bool evaluated = false;
   bool impact_detected = false;
   bool rollover_detected = false;
+  bool harsh_braking = false;
+  bool harsh_acceleration = false;
+  bool harsh_cornering = false;
+  bool virtual_ignition = false;
   float impact_magnitude = 0.0f;
+  float peak_g = 0.0f;
   float roll_angle = 0.0f;
   float pitch_angle = 0.0f;
 };

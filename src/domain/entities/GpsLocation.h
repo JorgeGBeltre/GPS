@@ -10,8 +10,11 @@ struct GpsLocation {
   float altitude = 0.0f;
   float speed = 0.0f;
   float course = 0.0f;
+  float hdop = 99.9f;
   int satellites = 0;
   bool isValid = false;
+  bool driftFiltered = false;
+  bool towDetected = false;
   String timestamp = "";
 };
 
