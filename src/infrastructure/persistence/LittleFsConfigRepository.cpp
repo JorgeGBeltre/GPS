@@ -48,6 +48,7 @@ void LittleFsConfigRepository::load() {
       doc["rollover_angle"] | defaultConfig.rollover_angle;
   currentConfig.alert_delay = doc["alert_delay"] | defaultConfig.alert_delay;
   currentConfig.sms_enabled = doc["sms_enabled"] | defaultConfig.sms_enabled;
+  currentConfig.sled_online = doc["sled_online"] | defaultConfig.sled_online;
 
   if (doc.containsKey("emergency_phone")) {
     strncpy(currentConfig.emergency_phone, doc["emergency_phone"],
@@ -57,6 +58,22 @@ void LittleFsConfigRepository::load() {
     strncpy(currentConfig.emergency_phone, defaultConfig.emergency_phone,
             MAX_PHONE_LENGTH - 1);
     currentConfig.emergency_phone[MAX_PHONE_LENGTH - 1] = '\0';
+  }
+
+  if (doc.containsKey("wifi_ssid")) {
+    strncpy(currentConfig.wifi_ssid, doc["wifi_ssid"],
+            sizeof(currentConfig.wifi_ssid) - 1);
+    currentConfig.wifi_ssid[sizeof(currentConfig.wifi_ssid) - 1] = '\0';
+  } else {
+    currentConfig.wifi_ssid[0] = '\0';
+  }
+
+  if (doc.containsKey("wifi_pass")) {
+    strncpy(currentConfig.wifi_pass, doc["wifi_pass"],
+            sizeof(currentConfig.wifi_pass) - 1);
+    currentConfig.wifi_pass[sizeof(currentConfig.wifi_pass) - 1] = '\0';
+  } else {
+    currentConfig.wifi_pass[0] = '\0';
   }
 
   LOG_INFO("Configuracion cargada desde LittleFS");
@@ -75,6 +92,9 @@ void LittleFsConfigRepository::save() {
   doc["alert_delay"] = currentConfig.alert_delay;
   doc["sms_enabled"] = currentConfig.sms_enabled;
   doc["emergency_phone"] = currentConfig.emergency_phone;
+  doc["wifi_ssid"] = currentConfig.wifi_ssid;
+  doc["wifi_pass"] = currentConfig.wifi_pass;
+  doc["sled_online"] = currentConfig.sled_online;
 
   if (serializeJson(doc, file) == 0) {
     LOG_ERROR("Fallo al escribir config a file");

@@ -54,10 +54,6 @@ constexpr unsigned long MQTT_RECONNECT_INTERVAL = 10000UL;
 constexpr size_t MQTT_BUFFER_SIZE = 40960;
 constexpr unsigned long MQTT_KEEP_ALIVE = 300UL;
 
-// NOTE (migration): the MQTT module referenced MQTT_TOPIC_CONFIG (via strcmp_P /
-// strncpy_P) but it was missing from the original config.h, so the sketch would
-// not compile as-is. Defined here as the PROGMEM "config" topic documented in
-// the README. Adjust if your broker uses a different config topic.
 static const char MQTT_TOPIC_CONFIG[] PROGMEM = "config";
 
 constexpr const char *root_ca_pem = "-----BEGIN CERTIFICATE-----\n"
@@ -85,6 +81,9 @@ struct AccidentConfig {
   unsigned long alert_delay = 30000UL;
   char emergency_phone[MAX_PHONE_LENGTH] = "+18296741199";
   bool sms_enabled = true;
+  char wifi_ssid[33] = "";
+  char wifi_pass[65] = "";
+  bool sled_online = true;
 };
 
 constexpr unsigned long ACCIDENT_COOLDOWN = 60000UL;
@@ -95,7 +94,9 @@ constexpr unsigned long TIME_SYNC_INTERVAL = 3600000UL;
 constexpr unsigned long ACCIDENT_CHECK_INTERVAL = 2000UL;
 constexpr int FAST_BLINK_INTERVAL = 100;
 constexpr int SLOW_BLINK_INTERVAL = 400;
-constexpr uint8_t BUTTON_LONG_PRESS_TIME = 3;
+constexpr uint16_t BUTTON_DEBOUNCE_MS = 50;
+constexpr uint16_t BUTTON_LONG_PRESS_MS = 5000;
+constexpr uint8_t BUTTON_LONG_PRESS_TIME = 5;
 
 constexpr const char *FIRMWARE_VERSION = "v0.0.5";
 
