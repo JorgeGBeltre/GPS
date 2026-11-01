@@ -32,7 +32,7 @@ void LittleFsConfigRepository::load() {
     return;
   }
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc;
   DeserializationError error = deserializeJson(doc, file);
   file.close();
 
@@ -49,6 +49,7 @@ void LittleFsConfigRepository::load() {
   currentConfig.alert_delay = doc["alert_delay"] | defaultConfig.alert_delay;
   currentConfig.sms_enabled = doc["sms_enabled"] | defaultConfig.sms_enabled;
   currentConfig.sled_online = doc["sled_online"] | defaultConfig.sled_online;
+  currentConfig.mqtt_port   = doc["mqtt_port"]   | defaultConfig.mqtt_port;
 
   if (doc.containsKey("emergency_phone")) {
     strncpy(currentConfig.emergency_phone, doc["emergency_phone"],
@@ -76,6 +77,23 @@ void LittleFsConfigRepository::load() {
     currentConfig.wifi_pass[0] = '\0';
   }
 
+  strncpy(currentConfig.apn, doc["apn"] | defaultConfig.apn,
+          sizeof(currentConfig.apn) - 1);
+  currentConfig.apn[sizeof(currentConfig.apn) - 1] = '\0';
+
+  strncpy(currentConfig.mqtt_server,
+          doc["mqtt_server"] | defaultConfig.mqtt_server,
+          sizeof(currentConfig.mqtt_server) - 1);
+  currentConfig.mqtt_server[sizeof(currentConfig.mqtt_server) - 1] = '\0';
+
+  strncpy(currentConfig.mqtt_user, doc["mqtt_user"] | defaultConfig.mqtt_user,
+          sizeof(currentConfig.mqtt_user) - 1);
+  currentConfig.mqtt_user[sizeof(currentConfig.mqtt_user) - 1] = '\0';
+
+  strncpy(currentConfig.mqtt_pass, doc["mqtt_pass"] | defaultConfig.mqtt_pass,
+          sizeof(currentConfig.mqtt_pass) - 1);
+  currentConfig.mqtt_pass[sizeof(currentConfig.mqtt_pass) - 1] = '\0';
+
   LOG_INFO("Configuracion cargada desde LittleFS");
 }
 
@@ -86,7 +104,7 @@ void LittleFsConfigRepository::save() {
     return;
   }
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc;
   doc["sensitivity"] = currentConfig.sensitivity;
   doc["rollover_angle"] = currentConfig.rollover_angle;
   doc["alert_delay"] = currentConfig.alert_delay;
@@ -94,6 +112,11 @@ void LittleFsConfigRepository::save() {
   doc["emergency_phone"] = currentConfig.emergency_phone;
   doc["wifi_ssid"] = currentConfig.wifi_ssid;
   doc["wifi_pass"] = currentConfig.wifi_pass;
+  doc["apn"] = currentConfig.apn;
+  doc["mqtt_server"] = currentConfig.mqtt_server;
+  doc["mqtt_port"] = currentConfig.mqtt_port;
+  doc["mqtt_user"] = currentConfig.mqtt_user;
+  doc["mqtt_pass"] = currentConfig.mqtt_pass;
   doc["sled_online"] = currentConfig.sled_online;
 
   if (serializeJson(doc, file) == 0) {

@@ -4,7 +4,8 @@
 
 PubSubClientTransport *PubSubClientTransport::s_instance = nullptr;
 
-PubSubClientTransport::PubSubClientTransport() : mqtt_client(wifiClient) {
+PubSubClientTransport::PubSubClientTransport(IConfigRepository &config)
+    : mqtt_client(wifiClient), m_config(config) {
   mqttConnected = false;
   lastReconnectAttempt = 0;
   mqttFailCount = 0;
@@ -51,20 +52,21 @@ void PubSubClientTransport::begin(const String &chipId) {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
-  if (WiFi.SSID().length() > 0) {
+  const auto &cfg = m_config.config();
+  if (strlen(cfg.wifi_ssid) > 0) {
+    WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+  } else if (WiFi.SSID().length() > 0) {
     WiFi.begin();
   }
 
-  mqtt_client.setServer(MQTT_SERVER, MQTT_PORT);
+  const char *broker =
+      (strlen(cfg.mqtt_server) > 0) ? cfg.mqtt_server : MQTT_SERVER;
+  const int port = (cfg.mqtt_port > 0) ? cfg.mqtt_port : MQTT_PORT;
+  mqtt_client.setServer(broker, port);
   mqtt_client.setCallback(mqttCallbackWrapper);
   mqtt_client.setBufferSize(MQTT_BUFFER_SIZE);
   mqtt_client.setKeepAlive(MQTT_KEEP_ALIVE);
 
-  // ESP8266 BearSSL equivalent of the ESP32 `setCACert(pem)` the original sketch
-  // used (that method does not exist on ESP8266, so the original did not compile
-  // here). NOTE: root_ca_pem in config.h is an empty placeholder — fill it with
-  // your broker's CA chain for the TLS handshake to succeed. For quick testing
-  // only, replace both lines with `wifiClient.setInsecure();`.
   static BearSSL::X509List caCert(root_ca_pem);
   wifiClient.setTrustAnchors(&caCert);
 }
@@ -76,8 +78,14 @@ void PubSubClientTransport::update() {
       LOG_WARN("WiFi desconectado");
     }
     if (currentWiFiStatus != WIFI_CONNECTING) {
-      currentWiFiStatus = WIFI_CONNECTING;
-      WiFi.begin();
+      const auto &cfg = m_config.config();
+      if (strlen(cfg.wifi_ssid) > 0) {
+        currentWiFiStatus = WIFI_CONNECTING;
+        WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+      } else if (WiFi.SSID().length() > 0) {
+        currentWiFiStatus = WIFI_CONNECTING;
+        WiFi.begin();
+      }
     }
   } else {
     if (currentWiFiStatus != WIFI_CONNECTED) {
@@ -109,8 +117,16 @@ void PubSubClientTransport::update() {
 }
 
 bool PubSubClientTransport::connectMQTT() {
+  const auto &cfg = m_config.config();
+  const char *broker =
+      (strlen(cfg.mqtt_server) > 0) ? cfg.mqtt_server : MQTT_SERVER;
+  const int port = (cfg.mqtt_port > 0) ? cfg.mqtt_port : MQTT_PORT;
+  mqtt_client.setServer(broker, port);
+
+  const char *user = (strlen(cfg.mqtt_user) > 0) ? cfg.mqtt_user : API_KEY;
+  const char *pass = cfg.mqtt_pass;
   String clientID = "ESP8266_" + m_chipId;
-  if (mqtt_client.connect(clientID.c_str(), API_KEY, "")) {
+  if (mqtt_client.connect(clientID.c_str(), user, pass)) {
     mqttConnected = true;
 
     String deviceEventTopic = "event/" + m_chipId;

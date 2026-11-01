@@ -7,12 +7,13 @@
 #include <WiFiClientSecure.h>
 
 #include "domain/entities/SystemTypes.h"
+#include "domain/interfaces/IConfigRepository.h"
 #include "domain/interfaces/IMqttTransport.h"
 
 // IMqttTransport backed by PubSubClient over TLS. Formerly MqttClientModule.
 class PubSubClientTransport : public IMqttTransport {
 public:
-  PubSubClientTransport();
+  explicit PubSubClientTransport(IConfigRepository &config);
 
   void begin(const String &chipId) override;
   void update() override;
@@ -32,6 +33,7 @@ private:
 
   WiFiClientSecure wifiClient;
   PubSubClient mqtt_client;
+  IConfigRepository &m_config;
 
   String m_chipId;
   bool mqttConnected;

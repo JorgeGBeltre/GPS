@@ -5,6 +5,7 @@
 // setup()/loop().
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 
 #include "config.h"
@@ -25,7 +26,7 @@
 LittleFsConfigRepository configRepo;
 TinyGpsPlusProvider gpsProvider(GPS_RX_PIN, GPS_TX_PIN);
 Sim800lAlertSender gsmSender(GSM_RX_PIN, GSM_TX_PIN, configRepo);
-PubSubClientTransport mqttTransport;
+PubSubClientTransport mqttTransport(configRepo);
 Mpu6050Detector accidentDetector(configRepo);
 EspClock espClock;
 gps::infra::GpioIndicator statusLed(wifiLed, true);
@@ -53,6 +54,33 @@ void onMqttEvent(const String &message) {
 
 void onMqttConfig(const String &message) {
   Serial.println("Configuracion MQTT push: " + message);
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, message)) {
+    return;
+  }
+  auto &cfg = configRepo.config();
+  if (doc.containsKey("sensitivity"))
+    cfg.sensitivity = doc["sensitivity"].as<int>();
+  if (doc.containsKey("rollover_angle"))
+    cfg.rollover_angle = doc["rollover_angle"].as<int>();
+  if (doc.containsKey("alert_delay"))
+    cfg.alert_delay = doc["alert_delay"].as<unsigned long>();
+  if (doc.containsKey("sms_enabled"))
+    cfg.sms_enabled = doc["sms_enabled"].as<bool>();
+  if (doc.containsKey("sled_online")) {
+    cfg.sled_online = doc["sled_online"].as<bool>();
+    statusLed.setSledOnline(cfg.sled_online);
+  }
+  if (doc.containsKey("emergency_phone")) {
+    strncpy(cfg.emergency_phone, doc["emergency_phone"] | "",
+            MAX_PHONE_LENGTH - 1);
+    cfg.emergency_phone[MAX_PHONE_LENGTH - 1] = '\0';
+  }
+  if (doc.containsKey("apn")) {
+    strncpy(cfg.apn, doc["apn"] | "", sizeof(cfg.apn) - 1);
+    cfg.apn[sizeof(cfg.apn) - 1] = '\0';
+  }
+  configRepo.save();
 }
 
 static void updateConnectivityIndicator() {
@@ -78,10 +106,15 @@ void setup() {
   statusLed.setSledOnline(cfg.sled_online);
 
   // Si hay credenciales Wi-Fi persistidas en LittleFS, iniciar asociación no
-  // bloqueante
+  // bloqueante; si el equipo está sin aprovisionar, lanzar flujo Quick Pairing
+  // de 2 etapas (SmartConfig -> SoftAP VESIS-<ChipID>)
   if (strlen(cfg.wifi_ssid) > 0) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+  } else {
+    Serial.println("[BOOT] Sin credenciales Wi-Fi en LittleFS -> Iniciando Quick Pairing...");
+    gps::infra::QuickPairingPortal::runPairingWorkflow(
+        device.chipId, configRepo, statusLed, pairingButton, true);
   }
 
   accidentDetector.begin();

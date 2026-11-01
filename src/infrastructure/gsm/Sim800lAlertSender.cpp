@@ -25,6 +25,10 @@ void Sim800lAlertSender::begin(const String &initialAuthCode) {
   sendATCommand("ATE0", "OK", 2000);
   sendATCommand("AT+CMGF=1", "OK", 2000);
   sendATCommand("AT+CNMI=2,2,0,0,0", "OK", 2000);
+  if (strlen(m_config.config().apn) > 0) {
+    String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + m_config.config().apn + "\"";
+    sendATCommand(cgdcont, "OK", 2000);
+  }
   LOG_INFO("Módulo GSM inicializado para recibir SMS");
 }
 

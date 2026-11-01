@@ -83,6 +83,11 @@ struct AccidentConfig {
   bool sms_enabled = true;
   char wifi_ssid[33] = "";
   char wifi_pass[65] = "";
+  char apn[48] = "internet.claro.com.do";
+  char mqtt_server[65] = "example.com";
+  int mqtt_port = 8084;
+  char mqtt_user[65] = "EXAMPLE_API_KEY";
+  char mqtt_pass[65] = "";
   bool sled_online = true;
 };
 

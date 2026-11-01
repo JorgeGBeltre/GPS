@@ -36,9 +36,9 @@
 | **Clean Architecture** | Strict separation into `domain`, `application`, `infrastructure`, and composition root (`src/main.cpp`) |
 | **Inertial Accident Detection (`MPU6050`)** | Moving-average filtering over linear acceleration and tilt angles (`roll` / `pitch`) to detect impacts and rollovers |
 | **Redundant Alerts (MQTT TLS + SMS)** | Immediate MQTT publication plus emergency SMS delivery with a Google Maps link to the configured emergency phone |
-| **Quick Pairing (`SmartConfig`)** | Triggered immediately upon holding the physical button (`GPIO 0`) for `5.0 s` without waiting for button release |
-| **SoftAP Captive Portal (`VESIS-<ChipID>`)** | Stage 2 pairing portal triggered by a 2nd `5.0 s` long press, preserving the `VESIS-<ChipID>` SSID and `12345678` passphrase |
-| **LittleFS Persistence (`/config.json`)** | Persists Wi-Fi credentials (`wifi_ssid`, `wifi_pass`), `sled_online`, `emergency_phone`, `sensitivity`, and `rollover_angle` |
+| **Quick Pairing (`SmartConfig`)** | Triggered on unprovisioned first boot or immediately upon holding the physical button (`GPIO 0`) for `5.0 s` without waiting for button release |
+| **SoftAP Captive Portal (`VESIS-<ChipID>`)** | Stage 2 pairing portal triggered by a 2nd `5.0 s` long press (or initial boot fallback), exposing both the HTML captive portal and Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) on `VESIS-<ChipID>` (`12345678`) |
+| **LittleFS Persistence (`/config.json`)** | Persists Wi-Fi credentials (`wifi_ssid`, `wifi_pass`), cellular `apn`, MQTT broker (`mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`), `sled_online`, `emergency_phone`, `sms_enabled`, `sensitivity`, `rollover_angle`, and `alert_delay` |
 | **Cryptographic Utilities (`CryptoUtils`)** | Pure C++ `MD5`, `AES-128-CBC` with PKCS#7 padding, and `Base64` primitives in the Application layer |
 
 ---
