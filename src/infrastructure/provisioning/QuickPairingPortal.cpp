@@ -168,16 +168,27 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
       strncpy(cfg.apn, payload["apn"] | "", sizeof(cfg.apn) - 1);
       cfg.apn[sizeof(cfg.apn) - 1] = '\0';
     }
-    if (payload.containsKey("mqtt_server") || payload.containsKey("mqtt_broker")) {
-      const char *m = payload["mqtt_server"] | (payload["mqtt_broker"] | "");
+    if (payload.containsKey("mqtt_server") || payload.containsKey("mqtt_broker") ||
+        payload.containsKey("server") || payload.containsKey("mqttHost") ||
+        payload.containsKey("serverName")) {
+      const char *m = payload["mqtt_server"] |
+                      (payload["mqtt_broker"] |
+                       (payload["mqttHost"] |
+                        (payload["server"] | (payload["serverName"] | ""))));
       strncpy(cfg.mqtt_server, m, sizeof(cfg.mqtt_server) - 1);
       cfg.mqtt_server[sizeof(cfg.mqtt_server) - 1] = '\0';
     }
     if (payload.containsKey("mqtt_port")) {
       cfg.mqtt_port = payload["mqtt_port"].as<int>();
+    } else if (payload.containsKey("mqttPort")) {
+      cfg.mqtt_port = payload["mqttPort"].as<int>();
+    } else if (payload.containsKey("port")) {
+      cfg.mqtt_port = payload["port"].as<int>();
     }
-    if (payload.containsKey("mqtt_user") || payload.containsKey("apikey")) {
-      const char *u = payload["mqtt_user"] | (payload["apikey"] | "");
+    if (payload.containsKey("mqtt_user") || payload.containsKey("apikey") ||
+        payload.containsKey("account")) {
+      const char *u =
+          payload["mqtt_user"] | (payload["apikey"] | (payload["account"] | ""));
       strncpy(cfg.mqtt_user, u, sizeof(cfg.mqtt_user) - 1);
       cfg.mqtt_user[sizeof(cfg.mqtt_user) - 1] = '\0';
     }

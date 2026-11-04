@@ -42,6 +42,7 @@ private:
   // single active instance pointer (replaces the old global `mqttManager`).
   static PubSubClientTransport *s_instance;
 
+  WiFiClient plainClient;
   WiFiClientSecure wifiClient;
   PubSubClient mqtt_client;
   IConfigRepository &m_config;

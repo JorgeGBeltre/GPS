@@ -62,6 +62,11 @@ void PubSubClientTransport::begin(const String &chipId) {
   const char *broker =
       (strlen(cfg.mqtt_server) > 0) ? cfg.mqtt_server : MQTT_SERVER;
   const int port = (cfg.mqtt_port > 0) ? cfg.mqtt_port : MQTT_PORT;
+  if (port == 1883) {
+    mqtt_client.setClient(plainClient);
+  } else {
+    mqtt_client.setClient(wifiClient);
+  }
   mqtt_client.setServer(broker, port);
   mqtt_client.setCallback(mqttCallbackWrapper);
   mqtt_client.setBufferSize(MQTT_BUFFER_SIZE);
@@ -125,11 +130,16 @@ bool PubSubClientTransport::connectMQTT() {
   const char *broker =
       (strlen(cfg.mqtt_server) > 0) ? cfg.mqtt_server : MQTT_SERVER;
   const int port = (cfg.mqtt_port > 0) ? cfg.mqtt_port : MQTT_PORT;
+  if (port == 1883) {
+    mqtt_client.setClient(plainClient);
+  } else {
+    mqtt_client.setClient(wifiClient);
+  }
   mqtt_client.setServer(broker, port);
 
   const char *user = (strlen(cfg.mqtt_user) > 0) ? cfg.mqtt_user : API_KEY;
   const char *pass = cfg.mqtt_pass;
-  String clientID = "ESP8266_" + m_chipId;
+  String clientID = m_chipId;
   if (mqtt_client.connect(clientID.c_str(), user, pass)) {
     mqttConnected = true;
 
