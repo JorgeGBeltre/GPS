@@ -53,11 +53,13 @@ logic, and hardware that can be swapped without touching the core.
 | **Inertial Accident Detection (`MPU6050`)** | Moving-average filtering over linear acceleration and tilt angles (`roll` / `pitch`) to detect impacts and rollovers |
 | **Redundant Alerts (MQTT TLS + SMS)** | Immediate MQTT publication plus emergency SMS delivery with a Google Maps link to the configured emergency phone |
 | **Quick Pairing (`SmartConfig`)** | Triggered on unprovisioned first boot or immediately upon holding the physical button (`GPIO 0`) for `5.0 s` without waiting for button release |
-| **SoftAP Captive Portal (`VESIS-<ChipID>`)** | Stage 2 pairing portal triggered by a 2nd `5.0 s` long press (or initial boot fallback), exposing both the HTML captive portal and Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) on `VESIS-<ChipID>` (`12345678`) |
-| **LittleFS Persistence (`/config.json`)** | Persists Wi-Fi credentials (`wifi_ssid`, `wifi_pass`), cellular `apn`, MQTT broker (`mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`), `sled_online`, `emergency_phone`, `sms_enabled`, `sensitivity`, `rollover_angle`, and `alert_delay` |
+| **SoftAP Captive Portal (`VESIS-<ChipID>`)** | Stage 2 pairing portal triggered by a 2nd `5.0 s` long press (or initial boot fallback), disabling background STA `autoReconnect` (`WiFi.setAutoReconnect(false)`) for channel stability and exposing both the HTML captive portal and Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) on `VESIS-<ChipID>` (`12345678`) |
+| **LittleFS Persistence (`/config.json`)** | Persists Wi-Fi credentials (`wifi_ssid`, `wifi_pass`), cellular `apn` (default `""`), `apn_user`, `apn_pass`, MQTT broker (`mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`), `device_key`, `bind_token`, `account_bound`, `sled_online`, `emergency_phone`, `sms_enabled`, `sensitivity`, `rollover_angle`, and `alert_delay` |
 | **Harsh Driving & Peak-G Vector (`GTHBM` / `GTCRA`)** | Evaluates 3-axis peak G-force magnitude (`peak_g`), harsh braking (`harsh_braking`), harsh acceleration (`harsh_acceleration`), harsh cornering (`harsh_cornering`), and virtual ignition (`virtual_ignition`) |
 | **Static GPS Drift Filter & Tow Detection (`GTRDF` / `GTTOW`)** | Pins stationary coordinates within a `30 m` anchor radius (`< 3.0 km/h`) and detects unauthorized parked towing (`> 100 m` displacement) |
-| **MCC/MNC Carrier Auto-APN & Jamming Detection (`GTJDC`)** | Auto-resolves the SIM800L carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming |
+| **MCC/MNC Carrier Auto-APN & Jamming Detection (`GTJDC`)** | Auto-resolves the SIM800L carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured (`apn == ""`) and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming |
+| **Family Identity & Dynamic `credential_mode`** | Exposes `device_family = "gps_esp8266"` (`device_code = 3`) and dynamic `credential_mode` (`"apn"` vs `"adopt_only"` with `apn_auto_detected` / `adopt_ready` from the pre-pairing SIM800L probe) on `GET /device` and `POST /ap`, allowing 1-tap account adoption without overwriting stored Wi-Fi/APN |
+| **Account Binding & BearSSL Cryptographic Unlink (`account_bound`)** | Connects with `ClientId == <ChipID>`, auto-selects plain TCP (`:1883`) vs BearSSL TLS (`:8084` / `:8883`), preserves credentials across Wi-Fi outages while `account_bound = true`, and wipes `/config.json` into Stage 1 Quick Pairing upon constant-time BearSSL `SHA-256` verification on `devices/<ChipID>/unlink/command` |
 | **Offline Alert Ring-Buffer (`+BUFF`)** | Queues up to `8` telemetry/accident messages in `PubSubClientTransport` when Wi-Fi/MQTT is disconnected and automatically flushes them upon reconnection |
 | **Cryptographic Utilities (`CryptoUtils`)** | Pure C++ `MD5`, `AES-128-CBC` with PKCS#7 padding, and `Base64` primitives in the Application layer |
 
@@ -82,11 +84,12 @@ logic, and hardware that can be swapped without touching the core.
 - `GpioIndicator` ([`GpioIndicator.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/indicator/GpioIndicator.h)):
   - `setSledOnline()`, `isSledOnline()`, `show()`, `update()` (`100 ms` non-blocking LED pattern generator with active-low support for the NodeMCU onboard LED).
 - `QuickPairingPortal` ([`QuickPairingPortal.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/provisioning/QuickPairingPortal.h), [`QuickPairingPortal.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/provisioning/QuickPairingPortal.cpp)):
+  - `setCellularState()` (injects pre-pairing SIM800L `simPresent`, `apnAutoDetected`, and `resolvedApn` snapshot)
   - `runQuickPairing()`
-  - `runSoftApPortal()`
+  - `runSoftApPortal()` (serves `device_family = "gps_esp8266"`, `device_code = 3`, `credential_mode`, `adopt_ready`, and `account_bound` on `GET /device` / `POST /ap` with `WiFi.setAutoReconnect(false)`)
   - `runPairingWorkflow()`
 - `LittleFsConfigRepository` ([`LittleFsConfigRepository.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/persistence/LittleFsConfigRepository.cpp)):
-  - Persists `wifi_ssid`, `wifi_pass`, `apn`, `mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`, and `sled_online` alongside accident detection thresholds in `/config.json`.
+  - Persists `wifi_ssid`, `wifi_pass`, `apn`, `apn_user`, `apn_pass`, `mqtt_server`, `mqtt_port`, `mqtt_user`, `mqtt_pass`, `device_key` (with deterministic hardware-derived default), `bind_token`, `account_bound`, and `sled_online` alongside accident detection thresholds in `/config.json`.
 - `AccidentAlgorithm` & `Mpu6050Detector` ([`AccidentAlgorithm.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/application/AccidentAlgorithm.cpp), [`Mpu6050Detector.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/sensors/Mpu6050Detector.cpp)):
   - `peak_g`, `harsh_braking`, `harsh_acceleration`, `harsh_cornering`, and `virtual_ignition` evaluation.
 - `TinyGpsPlusProvider` ([`TinyGpsPlusProvider.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/gps/TinyGpsPlusProvider.cpp)):
@@ -94,7 +97,7 @@ logic, and hardware that can be swapped without touching the core.
 - `Sim800lAlertSender` ([`Sim800lAlertSender.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/gsm/Sim800lAlertSender.cpp)):
   - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup) and `isJammingDetected()` (`GTJDC` RF jamming check).
 - `PubSubClientTransport` ([`PubSubClientTransport.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/mqtt/PubSubClientTransport.cpp)):
-  - `enqueueOffline()` and `flushOfflineQueue()` (`+BUFF` 8-slot offline alert store-and-forward buffer).
+  - `enqueueOffline()` and `flushOfflineQueue()` (`+BUFF` 8-slot offline alert store-and-forward buffer), `{ChipID}`-scoped MQTT subscriptions (`event/<ChipID>`, `config/<ChipID>`, `devices/<ChipID>/unlink/command`), automatic plain TCP (`:1883`) vs BearSSL TLS selection, and constant-time BearSSL `SHA-256` (`br_sha256_context`) `unlink_proof` verification.
 - `updateConnectivityIndicator()` in [`main.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/main.cpp).
 
 ---
@@ -138,8 +141,8 @@ flowchart TD
    - Holding the physical button (`GPIO 0`) for **5.0 seconds** immediately starts `runQuickPairing()`.
    - The status LED emits **2 short flashes + pause** (`100/100/100/700 ms`).
 2. **Stage 2 — SoftAP Captive Portal (`VESIS-<ChipID>`)**:
-   - Holding the button for another **5.0 seconds** while in Quick Pairing starts the **`VESIS-<ChipID>`** Wi-Fi SoftAP (password `12345678`, IP `192.168.4.1`) with fast continuous blinking (`100 ms ON / 100 ms OFF`).
-   - Exposes both the HTML web form and the Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) to configure Wi-Fi SSID, password, cellular APN, MQTT broker/port/credentials, emergency phone number, SMS enable flag, impact sensitivity, rollover angle, and alert delay, saving all parameters to `/config.json`.
+   - Holding the button for another **5.0 seconds** while in Quick Pairing starts the **`VESIS-<ChipID>`** Wi-Fi SoftAP (password `12345678`, IP `192.168.4.1`, `WiFi.setAutoReconnect(false)`) with fast continuous blinking (`100 ms ON / 100 ms OFF`).
+   - Exposes both the HTML web form and the Compatible Pairing JSON endpoints (`GET /device`, `POST /ap`) advertising `device_family = "gps_esp8266"`, `device_code = 3`, and dynamic `credential_mode` (`"apn"` vs `"adopt_only"` when SIM800L auto-resolved the carrier APN or Wi-Fi is already stored while unbound) to configure Wi-Fi SSID, password, cellular APN (`apn`, `apn_user`, `apn_pass`), MQTT broker/port/credentials, `bind_token`, `account_bound`, emergency phone number, SMS enable flag, impact sensitivity, rollover angle, and alert delay, saving all parameters to `/config.json` (while preserving stored Wi-Fi/APN on `adopt_only` account binding).
    - A **short press** cancels pairing mode and resumes normal operation.
 
 ---
@@ -407,7 +410,7 @@ Send to topic `commands/{device_id}`:
 - `get_config`: Get current configuration
 
 #### JSON Configuration via MQTT
-Send JSON to topic `config`:
+Send JSON to topic `config/{device_id}`:
 ```json
 {
   "sensitivity": 2500,
@@ -420,9 +423,9 @@ Send JSON to topic `config`:
 
 ### 4. Web Interface Configuration (WiFiManager)
 
-1. **Activate AP mode**: Press and hold the physical button for 3+ seconds
+1. **Activate AP mode**: Press and hold the physical button for `5.0 seconds` (`5000 ms`) to enter Stage 1 Quick Pairing, and hold for a 2nd `5.0 seconds` to open the SoftAP portal
 2. **Connect**: WiFi SSID: `VESIS-{CHIP_ID}`, Password: `12345678`
-3. **Configure**: Enter your WiFi SSID and password
+3. **Configure**: Enter your WiFi SSID, password, cellular APN (or submit `adopt_only` account-binding credentials via `POST /ap`)
 4. **Restart**: The device will restart automatically
 
 ### Default Values and Ranges
@@ -495,11 +498,24 @@ These commands provide detailed information for troubleshooting hardware and con
 ### Accident Detection Settings
 ```cpp
 struct AccidentConfig {
-  int sensitivity = 2000;        // Impact sensitivity threshold
-  int rollover_angle = 60;       // Rollover detection angle
-  unsigned long alert_delay = 30000; // Alert delay in milliseconds
-  String emergency_phone = "+18290000000"; // Emergency contact number
-  bool sms_enabled = true;       // Enable/disable SMS alerts
+  int sensitivity = 2000;                  // Impact sensitivity threshold
+  int rollover_angle = 60;                 // Rollover detection angle
+  unsigned long alert_delay = 30000UL;     // Alert delay in milliseconds
+  char emergency_phone[21] = "+18290000000"; // Emergency contact number
+  bool sms_enabled = true;                 // Enable/disable SMS alerts
+  char wifi_ssid[33] = "";
+  char wifi_pass[65] = "";
+  char apn[48] = "";                       // Empty default enables SIM800L carrier auto-APN
+  char apn_user[33] = "";
+  char apn_pass[33] = "";
+  char mqtt_server[65] = "example.com";
+  int mqtt_port = 8084;                    // Auto-selects plain TCP on 1883 vs BearSSL TLS
+  char mqtt_user[65] = "EXAMPLE_API_KEY";
+  char mqtt_pass[65] = "";
+  char device_key[37] = "";
+  char bind_token[65] = "";
+  bool sled_online = true;
+  bool account_bound = false;              // Distinguishes temporary Wi-Fi loss from account unlink
 };
 ```
 
@@ -513,14 +529,18 @@ const char* API_KEY = "EXAMPLE_API_KEY";
 ## MQTT Topics
 
 ### Communication Channels
+`PubSubClientTransport` connects with `ClientId == <ChipID>` and scopes inbound device subscriptions by `<ChipID>`:
+
 | Topic | Direction | Purpose |
 |-------|-----------|---------|
-| `telemetry` | Outgoing | GPS location data |
-| `events` | Outgoing | System events and accident alerts |
-| `commands` | Incoming | Device control commands |
-| `ota` | Incoming | Firmware update commands |
-| `status` | Outgoing | Device status information |
-| `config` | Bidirectional | Configuration management |
+| `telemetry` / `telemetry/<ChipID>` | Outgoing | GPS location data |
+| `events` / `events/<ChipID>` | Outgoing | System events and accident alerts |
+| `event/<ChipID>` | Incoming | Cloud envelope and device control commands |
+| `commands/<ChipID>` | Incoming | Device control commands |
+| `ota/<ChipID>` | Incoming | Firmware update commands |
+| `status` / `status/<ChipID>` | Outgoing | Device status information |
+| `config/<ChipID>` | Bidirectional | Scoped JSON configuration management |
+| `devices/<ChipID>/unlink/command` | Incoming | Cryptographically verified account unlink (`unlink_proof = SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`) |
 
 ## API Reference
 
@@ -534,7 +554,7 @@ The system responds to various MQTT commands:
 - `get_config`: Retrieve current configuration
 
 #### Configuration Commands
-Send JSON to `config` topic:
+Send JSON to `config/<ChipID>` topic:
 ```json
 {
   "sensitivity": 2000,
@@ -557,7 +577,7 @@ The system publishes structured JSON events:
     "MacAddress": "AA:BB:CC:DD:EE:FF",
     "IPAddress": "192.168.1.100",
     "ChipType": "ESP8266",
-    "FirmwareVersion": "v0.0.4"
+    "FirmwareVersion": "v0.0.6"
   },
   "Timestamp": "2024-01-15T10:30:45.123Z",
   "Details": {
