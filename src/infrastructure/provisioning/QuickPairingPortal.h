@@ -16,15 +16,11 @@ enum class QuickPairingResult : uint8_t {
   Timeout = 3            // Tiempo agotado
 };
 
-/**
- * @brief Emparejamiento en 2 etapas para ESP8266 NodeMCU:
- * - Etapa 1 (`runQuickPairing`): SmartConfig nativo (`ESP-Touch / AirKiss`) con doble destello LED (`100/100/100/700 ms`),
- *   transición a Etapa 2 en una 2ª pulsación larga de 5.0 s y cancelación por pulsación corta.
- * - Etapa 2 (`runSoftApPortal`): Portal cautivo SoftAP `VESIS-<ChipID>` (clave `12345678`, IP `192.168.4.1`)
- *   con `ESP8266WebServer` + `DNSServer`, guardando Wi-Fi y `AccidentConfig` en LittleFS (`/config.json`).
- */
 class QuickPairingPortal {
 public:
+  static void setCellularState(bool simPresent, bool apnAutoDetected,
+                               const String &resolvedApn);
+
   static QuickPairingResult runQuickPairing(IConfigRepository &configRepo,
                                             GpioIndicator &indicator,
                                             GpioButton &button,
@@ -44,4 +40,3 @@ public:
 } // namespace gps::infra
 
 #endif // INFRA_QUICKPAIRINGPORTAL_H
-

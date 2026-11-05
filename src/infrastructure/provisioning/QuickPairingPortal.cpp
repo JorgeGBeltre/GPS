@@ -3,8 +3,22 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
+#include <cstring>
 
 namespace gps::infra {
+
+namespace {
+bool s_simPresent = false;
+bool s_apnAutoDetected = false;
+String s_resolvedApn;
+} // namespace
+
+void QuickPairingPortal::setCellularState(bool simPresent, bool apnAutoDetected,
+                                          const String &resolvedApn) {
+  s_simPresent = simPresent;
+  s_apnAutoDetected = apnAutoDetected;
+  s_resolvedApn = resolvedApn;
+}
 
 QuickPairingResult QuickPairingPortal::runQuickPairing(
     IConfigRepository &configRepo, GpioIndicator &indicator, GpioButton &button,
@@ -22,7 +36,6 @@ QuickPairingResult QuickPairingPortal::runQuickPairing(
   delay(100);
   WiFi.beginSmartConfig();
 
-  // Esperar a que el usuario suelte el botón de la 1ª pulsación larga
   unsigned long releaseWaitStart = millis();
   while (digitalRead(button.getPin()) == LOW &&
          (millis() - releaseWaitStart) < 3000UL) {
@@ -82,6 +95,9 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
   String apSsid = "VESIS-" + chipId;
   const char *apPass = "12345678";
 
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false);
+  delay(100);
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apSsid.c_str(), apPass);
 
@@ -104,19 +120,17 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
                     "<form method='POST' action='/save'>");
     html += F("<label>WiFi SSID</label><input name='ssid' value='");
     html += String(cfg.wifi_ssid);
-    html += F("' required><label>Clave WiFi</label><input name='pass' type='password' value='");
-    html += String(cfg.wifi_pass);
-    html += F("'><label>APN Celular (SIM800L)</label><input name='apn' value='");
-    html += String(cfg.apn);
+    html += F("'><label>Clave WiFi</label><input name='pass' type='password'>"
+              "<label>APN Celular (SIM800L)</label><input name='apn' value='");
+    html += (std::strlen(cfg.apn) > 0) ? String(cfg.apn) : s_resolvedApn;
     html += F("'><label>Broker MQTT</label><input name='mqtt_server' value='");
     html += String(cfg.mqtt_server);
     html += F("'><label>Puerto MQTT</label><input name='mqtt_port' type='number' value='");
     html += String(cfg.mqtt_port);
     html += F("'><label>Usuario / API Key MQTT</label><input name='mqtt_user' value='");
     html += String(cfg.mqtt_user);
-    html += F("'><label>Password MQTT</label><input name='mqtt_pass' type='password' value='");
-    html += String(cfg.mqtt_pass);
-    html += F("'><label>Telefono de Emergencia</label><input name='phone' value='");
+    html += F("'><label>Password MQTT</label><input name='mqtt_pass' type='password'>"
+              "<label>Telefono de Emergencia</label><input name='phone' value='");
     html += String(cfg.emergency_phone);
     html += F("'><label>SMS de Emergencia</label><select name='sms_enabled'>");
     html += cfg.sms_enabled ? F("<option value='1' selected>Habilitado</option><option value='0'>Deshabilitado</option>")
@@ -128,45 +142,102 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
     html += F("'><label>Retardo Alerta (ms)</label><input name='alert_delay' type='number' value='");
     html += String(cfg.alert_delay);
     html += F("'><button type='submit'>Guardar y Reiniciar</button></form></body></html>");
+    server.sendHeader("Connection", "close");
     server.send(200, "text/html", html);
   });
 
-  // Endpoints JSON del modo Compatible SoftAP (GET /device y POST /ap)
-  server.on("/device", HTTP_GET, [&]() {
+  auto sendDeviceInfo = [&]() {
     const auto &cfg = configRepo.config();
-    StaticJsonDocument<384> doc;
-    doc["deviceid"] = chipId;
-    doc["apikey"]   = cfg.mqtt_user;
-    doc["chipid"]   = chipId;
-    doc["ap"]       = apSsid;
-    doc["model"]    = "VESIS-GPS-ESP8266";
-    doc["apn"]      = cfg.apn;
+    const bool wifiConn = (WiFi.status() == WL_CONNECTED);
+    const bool hasApn = std::strlen(cfg.apn) > 0 || s_apnAutoDetected;
+    const char *credMode =
+        (!cfg.account_bound && (s_apnAutoDetected || hasApn || wifiConn))
+            ? "adopt_only"
+            : (!hasApn ? "apn" : "adopt_only");
+    const bool adoptReady = (std::strcmp(credMode, "adopt_only") == 0);
+    const String effectiveApn =
+        (std::strlen(cfg.apn) > 0) ? String(cfg.apn) : s_resolvedApn;
+
+    StaticJsonDocument<640> doc;
+    doc["deviceid"]              = chipId;
+    doc["device_id"]             = chipId;
+    doc["chipid"]                = chipId;
+    doc["apikey"]                = cfg.device_key;
+    doc["device_key"]            = cfg.device_key;
+    doc["ap"]                    = apSsid;
+    doc["device_family"]         = "gps_esp8266";
+    doc["device_code"]           = 3;
+    doc["device_type"]           = "GPS-ESP8266";
+    doc["model"]                 = "VESIS-GPS-ESP8266";
+    doc["version"]               = FIRMWARE_VERSION;
+    doc["credential_mode"]       = credMode;
+    doc["requires_wifi"]         = false;
+    doc["requires_apn"]          = (std::strcmp(credMode, "apn") == 0);
+    doc["supports_wifi"]         = true;
+    doc["supports_apn"]          = true;
+    doc["sim_present"]           = s_simPresent;
+    doc["apn_auto_detected"]     = s_apnAutoDetected;
+    doc["cellular_connected"]    = s_apnAutoDetected;
+    doc["adopt_ready"]           = adoptReady;
+    doc["apn"]                   = effectiveApn;
+    doc["emergency_phone"]       = cfg.emergency_phone;
+    doc["account_bound"]         = cfg.account_bound;
+    doc["has_wifi_credentials"]  = (std::strlen(cfg.wifi_ssid) > 0);
+    doc["accept"]                = "post";
     String out;
     serializeJson(doc, out);
+    server.sendHeader("Connection", "close");
     server.send(200, "application/json", out);
-  });
+  };
 
-  server.on("/ap", HTTP_POST, [&]() {
+  auto handleApPost = [&]() {
     auto &cfg = configRepo.config();
     const String body = server.arg("plain");
     StaticJsonDocument<768> req;
     if (deserializeJson(req, body)) {
+      server.sendHeader("Connection", "close");
       server.send(400, "application/json", "{\"error\":400,\"msg\":\"invalid json\"}");
       return;
     }
     JsonVariant payload = req.containsKey("data") ? req["data"].as<JsonVariant>() : req.as<JsonVariant>();
-    if (payload.containsKey("ssid")) {
-      strncpy(cfg.wifi_ssid, payload["ssid"] | "", sizeof(cfg.wifi_ssid) - 1);
+
+    const char *nextSsid = payload["ssid"] | (payload["wifi_ssid"] | "");
+    const char *nextApn  = payload["apn"] | "";
+    const bool hasBrokerBundle =
+        payload.containsKey("mqtt_server") || payload.containsKey("mqtt_broker") ||
+        payload.containsKey("server") || payload.containsKey("serverName") ||
+        payload.containsKey("mqtt_user") || payload.containsKey("apikey") ||
+        payload.containsKey("bind_token") || payload.containsKey("token");
+    const bool canAdopt =
+        hasBrokerBundle &&
+        (s_apnAutoDetected || std::strlen(cfg.apn) > 0 || std::strlen(cfg.wifi_ssid) > 0);
+
+    if (std::strlen(nextSsid) == 0 && std::strlen(nextApn) == 0 && !canAdopt) {
+      server.sendHeader("Connection", "close");
+      server.send(400, "application/json", "{\"error\":400,\"msg\":\"missing credentials\"}");
+      return;
+    }
+
+    if (std::strlen(nextSsid) > 0) {
+      strncpy(cfg.wifi_ssid, nextSsid, sizeof(cfg.wifi_ssid) - 1);
       cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+      if (payload.containsKey("password") || payload.containsKey("pass") || payload.containsKey("wifi_pass")) {
+        const char *p = payload["password"] | (payload["pass"] | (payload["wifi_pass"] | ""));
+        strncpy(cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
+        cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
+      }
     }
-    if (payload.containsKey("password") || payload.containsKey("pass")) {
-      const char *p = payload["password"] | (payload["pass"] | "");
-      strncpy(cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
-      cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
-    }
-    if (payload.containsKey("apn")) {
-      strncpy(cfg.apn, payload["apn"] | "", sizeof(cfg.apn) - 1);
+    if (std::strlen(nextApn) > 0) {
+      strncpy(cfg.apn, nextApn, sizeof(cfg.apn) - 1);
       cfg.apn[sizeof(cfg.apn) - 1] = '\0';
+    }
+    if (payload.containsKey("apn_user")) {
+      strncpy(cfg.apn_user, payload["apn_user"] | "", sizeof(cfg.apn_user) - 1);
+      cfg.apn_user[sizeof(cfg.apn_user) - 1] = '\0';
+    }
+    if (payload.containsKey("apn_pass")) {
+      strncpy(cfg.apn_pass, payload["apn_pass"] | "", sizeof(cfg.apn_pass) - 1);
+      cfg.apn_pass[sizeof(cfg.apn_pass) - 1] = '\0';
     }
     if (payload.containsKey("mqtt_server") || payload.containsKey("mqtt_broker") ||
         payload.containsKey("server") || payload.containsKey("mqttHost") ||
@@ -175,8 +246,10 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
                       (payload["mqtt_broker"] |
                        (payload["mqttHost"] |
                         (payload["server"] | (payload["serverName"] | ""))));
-      strncpy(cfg.mqtt_server, m, sizeof(cfg.mqtt_server) - 1);
-      cfg.mqtt_server[sizeof(cfg.mqtt_server) - 1] = '\0';
+      if (std::strlen(m) > 0) {
+        strncpy(cfg.mqtt_server, m, sizeof(cfg.mqtt_server) - 1);
+        cfg.mqtt_server[sizeof(cfg.mqtt_server) - 1] = '\0';
+      }
     }
     if (payload.containsKey("mqtt_port")) {
       cfg.mqtt_port = payload["mqtt_port"].as<int>();
@@ -189,17 +262,38 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
         payload.containsKey("account")) {
       const char *u =
           payload["mqtt_user"] | (payload["apikey"] | (payload["account"] | ""));
-      strncpy(cfg.mqtt_user, u, sizeof(cfg.mqtt_user) - 1);
-      cfg.mqtt_user[sizeof(cfg.mqtt_user) - 1] = '\0';
+      if (std::strlen(u) > 0) {
+        strncpy(cfg.mqtt_user, u, sizeof(cfg.mqtt_user) - 1);
+        cfg.mqtt_user[sizeof(cfg.mqtt_user) - 1] = '\0';
+      }
     }
     if (payload.containsKey("mqtt_pass")) {
       strncpy(cfg.mqtt_pass, payload["mqtt_pass"] | "", sizeof(cfg.mqtt_pass) - 1);
       cfg.mqtt_pass[sizeof(cfg.mqtt_pass) - 1] = '\0';
     }
+    if (payload.containsKey("devicekey") || payload.containsKey("device_key")) {
+      const char *dk = payload["devicekey"] | (payload["device_key"] | "");
+      if (std::strlen(dk) > 0) {
+        strncpy(cfg.device_key, dk, sizeof(cfg.device_key) - 1);
+        cfg.device_key[sizeof(cfg.device_key) - 1] = '\0';
+      }
+    }
+    if (payload.containsKey("bind_token") || payload.containsKey("token")) {
+      const char *bt = payload["bind_token"] | (payload["token"] | "");
+      if (std::strlen(bt) > 0) {
+        strncpy(cfg.bind_token, bt, sizeof(cfg.bind_token) - 1);
+        cfg.bind_token[sizeof(cfg.bind_token) - 1] = '\0';
+      }
+    }
+    if (hasBrokerBundle) {
+      cfg.account_bound = true;
+    }
     if (payload.containsKey("emergency_phone") || payload.containsKey("phone")) {
       const char *ph = payload["emergency_phone"] | (payload["phone"] | "");
-      strncpy(cfg.emergency_phone, ph, MAX_PHONE_LENGTH - 1);
-      cfg.emergency_phone[MAX_PHONE_LENGTH - 1] = '\0';
+      if (std::strlen(ph) > 0) {
+        strncpy(cfg.emergency_phone, ph, MAX_PHONE_LENGTH - 1);
+        cfg.emergency_phone[MAX_PHONE_LENGTH - 1] = '\0';
+      }
     }
     if (payload.containsKey("sms_enabled")) {
       cfg.sms_enabled = payload["sms_enabled"].as<bool>();
@@ -214,9 +308,15 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
       cfg.alert_delay = payload["alert_delay"].as<unsigned long>();
     }
     configRepo.save();
+    server.sendHeader("Connection", "close");
     server.send(200, "application/json", "{\"error\":0}");
     saved = true;
-  });
+  };
+
+  server.on("/device", HTTP_GET, sendDeviceInfo);
+  server.on("/api/info", HTTP_GET, sendDeviceInfo);
+  server.on("/ap", HTTP_POST, handleApPost);
+  server.on("/api/wifi", HTTP_POST, handleApPost);
 
   server.on("/save", HTTP_POST, [&]() {
     auto &cfg = configRepo.config();
@@ -225,7 +325,7 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
               sizeof(cfg.wifi_ssid) - 1);
       cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
     }
-    if (server.hasArg("pass")) {
+    if (server.hasArg("pass") && server.arg("pass").length() > 0) {
       strncpy(cfg.wifi_pass, server.arg("pass").c_str(),
               sizeof(cfg.wifi_pass) - 1);
       cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
@@ -247,7 +347,7 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
               sizeof(cfg.mqtt_user) - 1);
       cfg.mqtt_user[sizeof(cfg.mqtt_user) - 1] = '\0';
     }
-    if (server.hasArg("mqtt_pass")) {
+    if (server.hasArg("mqtt_pass") && server.arg("mqtt_pass").length() > 0) {
       strncpy(cfg.mqtt_pass, server.arg("mqtt_pass").c_str(),
               sizeof(cfg.mqtt_pass) - 1);
       cfg.mqtt_pass[sizeof(cfg.mqtt_pass) - 1] = '\0';
@@ -270,6 +370,7 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
       cfg.alert_delay = (unsigned long)server.arg("alert_delay").toInt();
     }
     configRepo.save();
+    server.sendHeader("Connection", "close");
     server.send(200, "text/html",
                 "<html><body><h2>Configuracion guardada. Reiniciando...</h2></body></html>");
     saved = true;
@@ -313,6 +414,7 @@ bool QuickPairingPortal::runSoftApPortal(const String &chipId,
   dnsServer.stop();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   return saved;
 }
 
@@ -343,4 +445,3 @@ void QuickPairingPortal::runPairingWorkflow(
 }
 
 } // namespace gps::infra
-

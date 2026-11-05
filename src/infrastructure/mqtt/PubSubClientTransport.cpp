@@ -1,6 +1,49 @@
 #include "infrastructure/mqtt/PubSubClientTransport.h"
 
+#include <ArduinoJson.h>
+#include <bearssl/bearssl_hash.h>
+#include <cstdio>
+#include <cstring>
+
 #include "config.h"
+
+namespace {
+bool verifyBearSslUnlinkProof(const char *deviceKey, const char *chipId,
+                              const char *providedHex) {
+  if (!deviceKey || !chipId || !providedHex ||
+      deviceKey[0] == '\0' || chipId[0] == '\0' ||
+      std::strlen(providedHex) != 32) {
+    return false;
+  }
+  char inputBuf[192];
+  const int n = std::snprintf(inputBuf, sizeof(inputBuf), "%s:UNLINK:%s",
+                              deviceKey, chipId);
+  if (n <= 0 || static_cast<size_t>(n) >= sizeof(inputBuf)) {
+    return false;
+  }
+  uint8_t digest[32] = {0};
+  br_sha256_context ctx;
+  br_sha256_init(&ctx);
+  br_sha256_update(&ctx, inputBuf, static_cast<size_t>(n));
+  br_sha256_out(&ctx, digest);
+
+  char expectedHex[33] = {0};
+  for (size_t i = 0; i < 16; ++i) {
+    std::snprintf(expectedHex + (i * 2), 3, "%02x", digest[i]);
+  }
+  expectedHex[32] = '\0';
+
+  uint8_t diff = 0;
+  for (size_t i = 0; i < 32; ++i) {
+    char a = providedHex[i];
+    if (a >= 'A' && a <= 'F') {
+      a = static_cast<char>(a - 'A' + 'a');
+    }
+    diff |= static_cast<uint8_t>(a ^ expectedHex[i]);
+  }
+  return diff == 0;
+}
+} // namespace
 
 PubSubClientTransport *PubSubClientTransport::s_instance = nullptr;
 
@@ -26,6 +69,25 @@ void PubSubClientTransport::mqttCallbackWrapper(char *topic, byte *payload,
     message += (char)payload[i];
 
   Serial.printf("Tópico recibido: %s\n", topicStr.c_str());
+
+  String unlinkTopic = "devices/" + s_instance->m_chipId + "/unlink/command";
+  if (topicStr == unlinkTopic) {
+    StaticJsonDocument<320> doc;
+    if (deserializeJson(doc, message) == DeserializationError::Ok) {
+      const char *proof = doc["unlink_proof"] | "";
+      const auto &cfg = s_instance->m_config.config();
+      if (verifyBearSslUnlinkProof(cfg.device_key,
+                                   s_instance->m_chipId.c_str(), proof)) {
+        Serial.println("[UNLINK] Comando verificado criptograficamente -> Quick Pairing...");
+        if (s_instance->unlinkCallback_) {
+          s_instance->unlinkCallback_();
+        }
+      } else {
+        Serial.println("[UNLINK] AVISO: unlink_proof invalido rechazado.");
+      }
+    }
+    return;
+  }
 
   String deviceEventTopic = "event/" + s_instance->m_chipId;
   if (topicStr == deviceEventTopic) {
@@ -147,6 +209,8 @@ bool PubSubClientTransport::connectMQTT() {
     mqtt_client.subscribe(deviceEventTopic.c_str());
     String configTopic = String(FPSTR(MQTT_TOPIC_CONFIG)) + "/" + m_chipId;
     mqtt_client.subscribe(configTopic.c_str());
+    String unlinkTopic = "devices/" + m_chipId + "/unlink/command";
+    mqtt_client.subscribe(unlinkTopic.c_str());
 
     return true;
   }

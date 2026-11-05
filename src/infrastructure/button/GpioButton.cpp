@@ -44,10 +44,15 @@ ButtonEvent GpioButton::update() {
     return ButtonEvent::None;
   }
 
-  if ((now - lastSampleMs_) < SAMPLE_TICK_MS) {
+  const unsigned long elapsedMs = now - lastSampleMs_;
+  if (elapsedMs < SAMPLE_TICK_MS) {
     return ButtonEvent::None;
   }
-  lastSampleMs_ = now;
+  uint32_t stepTicks = static_cast<uint32_t>(elapsedMs / SAMPLE_TICK_MS);
+  if (stepTicks > 4U) {
+    stepTicks = 4U;
+  }
+  lastSampleMs_ += stepTicks * SAMPLE_TICK_MS;
 
   const uint32_t debounceTicks =
       (debounceMs_ >= SAMPLE_TICK_MS) ? (debounceMs_ / SAMPLE_TICK_MS) : 2U;
@@ -57,7 +62,7 @@ ButtonEvent GpioButton::update() {
   const bool pinLow = (digitalRead(pin_) == LOW);
   if (pinLow) {
     releaseTicks_ = 0;
-    ++pressTicks_;
+    pressTicks_ += stepTicks;
     if (pressTicks_ >= longPressTicks && !longPressFired_) {
       longPressFired_ = true;
       return ButtonEvent::LongPress;
@@ -65,7 +70,7 @@ ButtonEvent GpioButton::update() {
     return ButtonEvent::None;
   }
 
-  ++releaseTicks_;
+  releaseTicks_ += stepTicks;
   if (releaseTicks_ >= debounceTicks) {
     const bool validShortPress =
         (pressTicks_ >= debounceTicks && !longPressFired_);

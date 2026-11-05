@@ -13,6 +13,7 @@ public:
   void begin() override;
   void load() override;
   void save() override;
+  void factoryReset();
   AccidentConfig &config() override { return currentConfig; }
 
 private:

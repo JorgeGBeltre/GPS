@@ -83,12 +83,17 @@ struct AccidentConfig {
   bool sms_enabled = true;
   char wifi_ssid[33] = "";
   char wifi_pass[65] = "";
-  char apn[48] = "internet.claro.com.do";
+  char apn[48] = "";
+  char apn_user[33] = "";
+  char apn_pass[33] = "";
   char mqtt_server[65] = "example.com";
   int mqtt_port = 8084;
   char mqtt_user[65] = "EXAMPLE_API_KEY";
   char mqtt_pass[65] = "";
+  char device_key[37] = "";
+  char bind_token[65] = "";
   bool sled_online = true;
+  bool account_bound = false;
 };
 
 constexpr unsigned long ACCIDENT_COOLDOWN = 60000UL;
@@ -103,7 +108,7 @@ constexpr uint16_t BUTTON_DEBOUNCE_MS = 50;
 constexpr uint16_t BUTTON_LONG_PRESS_MS = 5000;
 constexpr uint8_t BUTTON_LONG_PRESS_TIME = 5;
 
-constexpr const char *FIRMWARE_VERSION = "v0.0.5";
+constexpr const char *FIRMWARE_VERSION = "v0.0.6";
 
 constexpr unsigned long OTA_TIMEOUT = 420000UL;
 

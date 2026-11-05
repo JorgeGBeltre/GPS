@@ -22,7 +22,10 @@ public:
   bool isResponsive() override;
 
   void checkStatus();
+  void probeAutoApn();
   bool isJammingDetected() const { return jammingDetected_; }
+  bool isSimPresent() const { return simPresent_; }
+  bool isApnAutoDetected() const { return apnAutoDetected_; }
   const String &resolvedApn() const { return resolvedApn_; }
 
 private:
@@ -42,6 +45,8 @@ private:
   unsigned long smsLockoutStart;
   int lastRssiCsq_ = 0;
   bool jammingDetected_ = false;
+  bool simPresent_ = false;
+  bool apnAutoDetected_ = false;
 
   String smsBuffer;
   bool enSMS;

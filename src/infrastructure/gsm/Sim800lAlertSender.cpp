@@ -61,14 +61,63 @@ String Sim800lAlertSender::queryATResponse(const String &command,
 }
 
 String Sim800lAlertSender::autoResolveCarrierApn() {
-  String imsiResp = queryATResponse("AT+CIMI", 1500);
+  String cpinResp = queryATResponse("AT+CPIN?", 800);
+  if (cpinResp.indexOf("READY") >= 0) {
+    simPresent_ = true;
+  }
+  String imsiResp = queryATResponse("AT+CIMI", 1200);
   for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]);
        ++i) {
     if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) >= 0) {
-      return String(kCarrierApnTable[i].apn);
+      simPresent_ = true;
+      apnAutoDetected_ = true;
+      resolvedApn_ = String(kCarrierApnTable[i].apn);
+      return resolvedApn_;
+    }
+  }
+  String cgdcontResp = queryATResponse("AT+CGDCONT?", 800);
+  int tag = cgdcontResp.indexOf("+CGDCONT:");
+  if (tag >= 0) {
+    int qCount = 0;
+    int qStart = -1;
+    for (int i = tag; i < (int)cgdcontResp.length(); ++i) {
+      if (cgdcontResp[i] == '"') {
+        ++qCount;
+        if (qCount == 3) {
+          qStart = i + 1;
+        } else if (qCount == 4 && qStart > 0) {
+          String netApn = cgdcontResp.substring(qStart, i);
+          netApn.trim();
+          if (netApn.length() > 0) {
+            simPresent_ = true;
+            apnAutoDetected_ = true;
+            resolvedApn_ = netApn;
+            return resolvedApn_;
+          }
+          break;
+        }
+      }
     }
   }
   return "";
+}
+
+void Sim800lAlertSender::probeAutoApn() {
+  sim800.begin(9600);
+  delay(200);
+  String atResp = queryATResponse("AT", 400);
+  if (atResp.indexOf("OK") < 0) {
+    atResp = queryATResponse("AT", 400);
+  }
+  if (atResp.indexOf("OK") < 0) {
+    return;
+  }
+  sendATCommand("ATE0", "OK", 400);
+  String detected = autoResolveCarrierApn();
+  if (detected.length() > 0) {
+    String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + detected + "\"";
+    sendATCommand(cgdcont, "OK", 600);
+  }
 }
 
 void Sim800lAlertSender::begin(const String &initialAuthCode) {

@@ -5,6 +5,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
+#include <functional>
 
 #include "domain/entities/SystemTypes.h"
 #include "domain/interfaces/IConfigRepository.h"
@@ -28,6 +29,7 @@ public:
   void publish(const char *topic, const char *message) override;
   void setEventCallback(MqttEventCallback cb) override;
   void setConfigCallback(MqttConfigCallback cb) override;
+  void setUnlinkCallback(std::function<void()> cb) { unlinkCallback_ = std::move(cb); }
   bool isConnected() override;
   size_t bufferedCount() const { return queueCount_; }
 
@@ -38,8 +40,6 @@ private:
   static void mqttCallbackWrapper(char *topic, byte *payload,
                                   unsigned int length);
 
-  // PubSubClient's C-style callback cannot bind to an instance, so we keep a
-  // single active instance pointer (replaces the old global `mqttManager`).
   static PubSubClientTransport *s_instance;
 
   WiFiClient plainClient;
@@ -60,6 +60,7 @@ private:
 
   MqttEventCallback eventCallback;
   MqttConfigCallback configCallback;
+  std::function<void()> unlinkCallback_;
 };
 
 #endif // INFRA_PUBSUBCLIENTTRANSPORT_H

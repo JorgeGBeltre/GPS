@@ -93,11 +93,22 @@ static void updateConnectivityIndicator() {
   }
 }
 
+static void executeFactoryUnlinkToQuickPairing() {
+  Serial.println("[UNLINK] Dispositivo desvinculado de la cuenta -> Borrando credenciales y entrando en Quick Pairing...");
+  configRepo.factoryReset();
+  WiFi.disconnect(true);
+  ESP.eraseConfig();
+  delay(200);
+  ESP.restart();
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\n\n*** INICIO SISTEMA VESIS (CLEAN ARCHITECTURE) ***");
 
-  device.chipId = String(ESP.getChipId());
+  char chipHex[16];
+  snprintf(chipHex, sizeof(chipHex), "%08X", ESP.getChipId());
+  device.chipId = String(chipHex);
 
   configRepo.begin();
   pairingButton.init();
@@ -105,14 +116,15 @@ void setup() {
   const auto &cfg = configRepo.config();
   statusLed.setSledOnline(cfg.sled_online);
 
-  // Si hay credenciales Wi-Fi persistidas en LittleFS, iniciar asociación no
-  // bloqueante; si el equipo está sin aprovisionar, lanzar flujo Quick Pairing
-  // de 2 etapas (SmartConfig -> SoftAP VESIS-<ChipID>)
   if (strlen(cfg.wifi_ssid) > 0) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
-  } else {
-    Serial.println("[BOOT] Sin credenciales Wi-Fi en LittleFS -> Iniciando Quick Pairing...");
+  } else if (!cfg.account_bound) {
+    Serial.println("[BOOT] Sin credenciales en LittleFS -> Sondeando APN automatico y lanzando Quick Pairing...");
+    gsmSender.probeAutoApn();
+    gps::infra::QuickPairingPortal::setCellularState(
+        gsmSender.isSimPresent(), gsmSender.isApnAutoDetected(),
+        gsmSender.resolvedApn());
     gps::infra::QuickPairingPortal::runPairingWorkflow(
         device.chipId, configRepo, statusLed, pairingButton, true);
   }
@@ -127,6 +139,7 @@ void setup() {
   mqttTransport.begin(device.chipId);
   mqttTransport.setEventCallback(onMqttEvent);
   mqttTransport.setConfigCallback(onMqttConfig);
+  mqttTransport.setUnlinkCallback(executeFactoryUnlinkToQuickPairing);
 
   espClock.configureNtp();
   updateConnectivityIndicator();
@@ -139,6 +152,9 @@ void loop() {
   if (btnEv == gps::infra::ButtonEvent::LongPress) {
     Serial.println(
         "[BTN] Pulsacion larga (5.0s) detectada -> Iniciando Quick Pairing...");
+    gps::infra::QuickPairingPortal::setCellularState(
+        gsmSender.isSimPresent(), gsmSender.isApnAutoDetected(),
+        gsmSender.resolvedApn());
     gps::infra::QuickPairingPortal::runPairingWorkflow(
         device.chipId, configRepo, statusLed, pairingButton, false);
   }
