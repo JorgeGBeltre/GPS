@@ -49,10 +49,10 @@ constexpr int daylightOffset_sec = 0;
 constexpr const char *MQTT_SERVER = "example.com";
 constexpr int MQTT_PORT = 8084;
 
-constexpr const char *API_KEY = "EXAMPLE_API_KEY";
+constexpr const char *API_KEY = "";
 constexpr unsigned long MQTT_RECONNECT_INTERVAL = 10000UL;
-constexpr size_t MQTT_BUFFER_SIZE = 40960;
-constexpr unsigned long MQTT_KEEP_ALIVE = 300UL;
+constexpr size_t MQTT_BUFFER_SIZE = 2048;
+constexpr unsigned long MQTT_KEEP_ALIVE = 120UL;
 
 static const char MQTT_TOPIC_CONFIG[] PROGMEM = "config";
 
@@ -88,7 +88,7 @@ struct AccidentConfig {
   char apn_pass[33] = "";
   char mqtt_server[65] = "example.com";
   int mqtt_port = 8084;
-  char mqtt_user[65] = "EXAMPLE_API_KEY";
+  char mqtt_user[65] = "";
   char mqtt_pass[65] = "";
   char device_key[37] = "";
   char bind_token[65] = "";
