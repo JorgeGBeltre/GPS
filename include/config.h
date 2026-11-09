@@ -49,9 +49,9 @@ constexpr int daylightOffset_sec = 0;
 constexpr const char *MQTT_SERVER = "example.com";
 constexpr int MQTT_PORT = 8084;
 
-constexpr const char *API_KEY = "";
+constexpr const char *API_KEY = "EXAMPLE_API_KEY";
 constexpr unsigned long MQTT_RECONNECT_INTERVAL = 10000UL;
-constexpr size_t MQTT_BUFFER_SIZE = 2048;
+constexpr size_t MQTT_BUFFER_SIZE = 40960;
 constexpr unsigned long MQTT_KEEP_ALIVE = 120UL;
 
 static const char MQTT_TOPIC_CONFIG[] PROGMEM = "config";

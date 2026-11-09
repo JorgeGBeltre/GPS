@@ -60,12 +60,11 @@ PubSubClientTransport::PubSubClientTransport(IConfigRepository &config)
 
 void PubSubClientTransport::mqttCallbackWrapper(char *topic, byte *payload,
                                                 unsigned int length) {
-  if (!s_instance || !topic || !payload || length > MQTT_BUFFER_SIZE)
+  if (!s_instance)
     return;
 
   String topicStr = String(topic);
   String message;
-  message.reserve(length + 1);
   for (unsigned int i = 0; i < length; i++)
     message += (char)payload[i];
 
@@ -201,16 +200,9 @@ bool PubSubClientTransport::connectMQTT() {
   mqtt_client.setServer(broker, port);
 
   const char *user = (strlen(cfg.mqtt_user) > 0) ? cfg.mqtt_user : API_KEY;
-  if (!user || user[0] == '\0' || strcmp(user, "EXAMPLE_API_KEY") == 0) {
-    return false;
-  }
   const char *pass = cfg.mqtt_pass;
   String clientID = m_chipId;
-  String statusWillTopic = "status/" + m_chipId;
-  String statusWillPayload = "{\"status\":\"offline\",\"chipId\":\"" + m_chipId + "\"}";
-  if (mqtt_client.connect(clientID.c_str(), user, pass,
-                          statusWillTopic.c_str(), 1, true,
-                          statusWillPayload.c_str())) {
+  if (mqtt_client.connect(clientID.c_str(), user, pass)) {
     mqttConnected = true;
 
     String deviceEventTopic = "event/" + m_chipId;
