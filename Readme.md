@@ -59,7 +59,7 @@ logic, and hardware that can be swapped without touching the core.
 | **Static GPS Drift Filter & Tow Detection (`GTRDF` / `GTTOW`)** | Pins stationary coordinates within a `30 m` anchor radius (`< 3.0 km/h`) and detects unauthorized parked towing (`> 100 m` displacement) |
 | **MCC/MNC Carrier Auto-APN & Jamming Detection (`GTJDC`)** | Auto-resolves the SIM800L carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured (`apn == ""`) and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming |
 | **Family Identity & Dynamic `credential_mode`** | Exposes `device_family = "gps_esp8266"` (`device_code = 3`) and dynamic `credential_mode` (`"apn"` vs `"adopt_only"` with `apn_auto_detected` / `adopt_ready` from the pre-pairing SIM800L probe) on `GET /device` and `POST /ap`, allowing 1-tap account adoption without overwriting stored Wi-Fi/APN |
-| **Account Binding & BearSSL Cryptographic Unlink (`account_bound`)** | Connects with `ClientId == <ChipID>`, auto-selects plain TCP (`:1883`) vs BearSSL TLS (`:8084` / `:8883`), preserves credentials across Wi-Fi outages while `account_bound = true`, and wipes `/config.json` into Stage 1 Quick Pairing upon constant-time BearSSL `SHA-256` verification on `devices/<ChipID>/unlink/command` |
+| **Account Binding & BearSSL Cryptographic Unlink (`account_bound`)** | Connects with `ClientId == <ChipID>` (rejecting unprovisioned empty or `"EXAMPLE_API_KEY"` credentials), publishes a retained Last Will and Testament (`status/<ChipID>`), auto-selects plain TCP (`:1883`) vs BearSSL TLS (`:8084` / `:8883`) with a bounded `2048`-byte MQTT packet buffer (`MQTT_BUFFER_SIZE = 2048`), preserves credentials across Wi-Fi outages while `account_bound = true`, and wipes `/config.json` into Stage 1 Quick Pairing upon constant-time BearSSL `SHA-256` verification on `devices/<ChipID>/unlink/command` |
 | **Offline Alert Ring-Buffer (`+BUFF`)** | Queues up to `8` telemetry/accident messages in `PubSubClientTransport` when Wi-Fi/MQTT is disconnected and automatically flushes them upon reconnection |
 | **Cryptographic Utilities (`CryptoUtils`)** | Pure C++ `MD5`, `AES-128-CBC` with PKCS#7 padding, and `Base64` primitives in the Application layer |
 
@@ -97,7 +97,7 @@ logic, and hardware that can be swapped without touching the core.
 - `Sim800lAlertSender` ([`Sim800lAlertSender.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/gsm/Sim800lAlertSender.cpp)):
   - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup) and `isJammingDetected()` (`GTJDC` RF jamming check).
 - `PubSubClientTransport` ([`PubSubClientTransport.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/infrastructure/mqtt/PubSubClientTransport.cpp)):
-  - `enqueueOffline()` and `flushOfflineQueue()` (`+BUFF` 8-slot offline alert store-and-forward buffer), `{ChipID}`-scoped MQTT subscriptions (`event/<ChipID>`, `config/<ChipID>`, `devices/<ChipID>/unlink/command`), automatic plain TCP (`:1883`) vs BearSSL TLS selection, and constant-time BearSSL `SHA-256` (`br_sha256_context`) `unlink_proof` verification.
+  - `enqueueOffline()` and `flushOfflineQueue()` (`+BUFF` 8-slot offline alert store-and-forward buffer), `{ChipID}`-scoped MQTT subscriptions (`event/<ChipID>`, `config/<ChipID>`, `devices/<ChipID>/unlink/command`), retained Last Will and Testament (`status/<ChipID>`, QoS `1`), unprovisioned credential guard (blocking empty or `"EXAMPLE_API_KEY"` logins), bounded `2048`-byte inbound payload validation (`length <= MQTT_BUFFER_SIZE` with `message.reserve(length + 1)`), automatic plain TCP (`:1883`) vs BearSSL TLS selection, and constant-time BearSSL `SHA-256` (`br_sha256_context`) `unlink_proof` verification.
 - `updateConnectivityIndicator()` in [`main.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS/src/main.cpp).
 
 ---
@@ -510,7 +510,7 @@ struct AccidentConfig {
   char apn_pass[33] = "";
   char mqtt_server[65] = "example.com";
   int mqtt_port = 8084;                    // Auto-selects plain TCP on 1883 vs BearSSL TLS
-  char mqtt_user[65] = "EXAMPLE_API_KEY";
+  char mqtt_user[65] = "";                 // Must be provisioned (empty or "EXAMPLE_API_KEY" is rejected)
   char mqtt_pass[65] = "";
   char device_key[37] = "";
   char bind_token[65] = "";
@@ -521,9 +521,11 @@ struct AccidentConfig {
 
 ### MQTT Configuration
 ```cpp
-const char* MQTT_SERVER = "example.com";
-const int MQTT_PORT = 8084;
-const char* API_KEY = "EXAMPLE_API_KEY";
+constexpr const char* MQTT_SERVER = "example.com";
+constexpr int MQTT_PORT = 8084;
+constexpr const char* API_KEY = "";
+constexpr size_t MQTT_BUFFER_SIZE = 2048;
+constexpr unsigned long MQTT_KEEP_ALIVE = 120UL;
 ```
 
 ## MQTT Topics
