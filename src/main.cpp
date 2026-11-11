@@ -44,7 +44,19 @@ AccidentService accidentService(accidentDetector, gpsProvider, gsmSender,
 void onSmsReceived(const String &numero, const String &comando) {
   Serial.println(">>> Procesando SMS desde: " + numero);
   if (comando == "STATUS") {
-    gsmSender.sendResponse(numero, "GPS STATUS OK.");
+    GpsLocation loc;
+    gpsProvider.readData(loc);
+    gsmSender.enrichWithLbs(loc);
+    String reply = "GPS STATUS OK.";
+    if (loc.isValid) {
+      reply += String(loc.isLbsFallback ? " LBS:" : " GPS:") +
+               String(loc.latitude, 6) + "," + String(loc.longitude, 6);
+    }
+    if (loc.lbsValid && loc.cellId > 0) {
+      reply += " CELL:" + String(loc.mcc) + "-" + String(loc.mnc) + "-" +
+               String(loc.lac) + "-" + String(loc.cellId);
+    }
+    gsmSender.sendResponse(numero, reply);
   }
 }
 

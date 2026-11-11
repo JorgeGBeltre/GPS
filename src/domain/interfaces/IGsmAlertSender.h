@@ -22,6 +22,7 @@ public:
   virtual void sendResponse(const String &numero, const String &mensaje) = 0;
   virtual void setCommandCallback(SmsCommandCallback cb) = 0;
   virtual bool isResponsive() = 0;
+  virtual void enrichWithLbs(GpsLocation &gps) { (void)gps; }
 };
 
 #endif // DOMAIN_IGSMALERTSENDER_H

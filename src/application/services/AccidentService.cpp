@@ -19,14 +19,15 @@ void AccidentService::process() {
   const String ts = m_clock.getISOTimestamp();
   Serial.println(">> ¡ALERTA LANZADA AL SISTEMA!");
 
-  // Read the current fix so the alert carries a real location.
+  // Read the current fix so the alert carries a real location (with cellular LBS fallback).
   GpsLocation location;
   m_gps.readData(location);
+  m_gsm.enrichWithLbs(location);
   event.tow_detected = location.towDetected;
 
   m_gsm.sendAlert(event, location, ts, m_device.chipId);
 
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<512> doc;
   doc["type"] = "accident";
   doc["impact"] = event.impact_detected;
   doc["rollover"] = event.rollover_detected;
@@ -36,16 +37,29 @@ void AccidentService::process() {
   doc["harsh_cornering"] = event.harsh_cornering;
   doc["tow"] = event.tow_detected;
   doc["virtual_ignition"] = event.virtual_ignition;
+  doc["pos_src"] = location.isValid
+                       ? (location.isLbsFallback ? "LBS" : "GPS")
+                       : (location.lbsValid ? "LBS_CELL_ID" : "NONE");
+  doc["lbs_fallback"] = location.isLbsFallback;
   if (location.isValid) {
     doc["lat"] = location.latitude;
     doc["lon"] = location.longitude;
     doc["speed_kmh"] = location.speed;
     doc["hdop"] = location.hdop;
   }
+  if (location.lbsValid) {
+    doc["mcc"] = location.mcc;
+    doc["mnc"] = location.mnc;
+    doc["lac"] = location.lac;
+    doc["cell_id"] = location.cellId;
+    if (location.lbsAccuracyM > 0) {
+      doc["lbs_acc_m"] = location.lbsAccuracyM;
+    }
+  }
   doc["id"] = m_device.chipId;
   doc["timestamp"] = ts;
 
-  char buffer[384];
+  char buffer[512];
   serializeJson(doc, buffer);
   m_mqtt.publish("telemetry/accidents", buffer);
 }

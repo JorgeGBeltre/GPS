@@ -20,13 +20,19 @@ public:
   void sendResponse(const String &numero, const String &mensaje) override;
   void setCommandCallback(SmsCommandCallback cb) override;
   bool isResponsive() override;
+  void enrichWithLbs(GpsLocation &gps) override;
 
   void checkStatus();
   void probeAutoApn();
+  void pollLbsCellInfo(bool requestCoordinatesIfNoGps);
   bool isJammingDetected() const { return jammingDetected_; }
   bool isSimPresent() const { return simPresent_; }
   bool isApnAutoDetected() const { return apnAutoDetected_; }
   const String &resolvedApn() const { return resolvedApn_; }
+  int mcc() const { return mcc_; }
+  int mnc() const { return mnc_; }
+  uint32_t lac() const { return lac_; }
+  uint32_t cellId() const { return cellId_; }
 
 private:
   bool sendATCommand(const String &command, const String &expectedResponse,
@@ -47,6 +53,16 @@ private:
   bool jammingDetected_ = false;
   bool simPresent_ = false;
   bool apnAutoDetected_ = false;
+
+  int mcc_ = 0;
+  int mnc_ = 0;
+  uint32_t lac_ = 0;
+  uint32_t cellId_ = 0;
+  bool hasLbsCoords_ = false;
+  double lbsLat_ = 0.0;
+  double lbsLon_ = 0.0;
+  int lbsAccM_ = 0;
+  unsigned long lastLbsPollMs_ = 0;
 
   String smsBuffer;
   bool enSMS;

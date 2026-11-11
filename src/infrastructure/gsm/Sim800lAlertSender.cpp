@@ -1,6 +1,8 @@
 #include "infrastructure/gsm/Sim800lAlertSender.h"
 
 #include "config.h"
+#include <cmath>
+#include <cstdlib>
 
 namespace {
 struct CarrierApnEntry {
@@ -29,6 +31,67 @@ constexpr CarrierApnEntry kCarrierApnTable[] = {
     {"21401", "airtelnet.es"},
     {"21407", "movistar.es"},
 };
+
+bool parseRegLacCellId(const String &regResp, uint32_t &outLac,
+                       uint32_t &outCellId) {
+  int q1 = regResp.indexOf('"');
+  if (q1 < 0)
+    return false;
+  int q2 = regResp.indexOf('"', q1 + 1);
+  if (q2 < 0)
+    return false;
+  int q3 = regResp.indexOf('"', q2 + 1);
+  if (q3 < 0)
+    return false;
+  int q4 = regResp.indexOf('"', q3 + 1);
+  if (q4 < 0)
+    return false;
+
+  String lacHex = regResp.substring(q1 + 1, q2);
+  String ciHex = regResp.substring(q3 + 1, q4);
+  lacHex.trim();
+  ciHex.trim();
+  if (lacHex.length() == 0 || ciHex.length() == 0)
+    return false;
+
+  uint32_t lac = static_cast<uint32_t>(std::strtoul(lacHex.c_str(), nullptr, 16));
+  uint32_t ci = static_cast<uint32_t>(std::strtoul(ciHex.c_str(), nullptr, 16));
+  if (ci == 0 || ci == 0xFFFFFFFFUL)
+    return false;
+
+  outLac = lac;
+  outCellId = ci;
+  return true;
+}
+
+void extractDigitsMccMnc(const String &raw, int &outMcc, int &outMnc) {
+  String digits = "";
+  for (int i = 0; i < (int)raw.length(); ++i) {
+    if (raw[i] >= '0' && raw[i] <= '9') {
+      digits += raw[i];
+    } else if (digits.length() >= 5) {
+      break;
+    } else {
+      digits = "";
+    }
+  }
+  if (digits.length() >= 5) {
+    outMcc = digits.substring(0, 3).toInt();
+    int mncLen = 2;
+    for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]);
+         ++i) {
+      if (digits.startsWith(kCarrierApnTable[i].mccMncPrefix)) {
+        int pLen = static_cast<int>(strlen(kCarrierApnTable[i].mccMncPrefix));
+        if (pLen >= 5)
+          mncLen = pLen - 3;
+        break;
+      }
+    }
+    if ((int)digits.length() >= 3 + mncLen) {
+      outMnc = digits.substring(3, 3 + mncLen).toInt();
+    }
+  }
+}
 } // namespace
 
 Sim800lAlertSender::Sim800lAlertSender(uint8_t rxPin, uint8_t txPin,
@@ -66,6 +129,7 @@ String Sim800lAlertSender::autoResolveCarrierApn() {
     simPresent_ = true;
   }
   String imsiResp = queryATResponse("AT+CIMI", 1200);
+  extractDigitsMccMnc(imsiResp, mcc_, mnc_);
   for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]);
        ++i) {
     if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) >= 0) {
@@ -133,6 +197,8 @@ void Sim800lAlertSender::begin(const String &initialAuthCode) {
   sendATCommand("ATE0", "OK", 2000);
   sendATCommand("AT+CMGF=1", "OK", 2000);
   sendATCommand("AT+CNMI=2,2,0,0,0", "OK", 2000);
+  sendATCommand("AT+CREG=2", "OK", 1000);
+  sendATCommand("AT+CGREG=2", "OK", 1000);
 
   resolvedApn_ = String(m_config.config().apn);
   if (resolvedApn_.length() == 0) {
@@ -142,7 +208,101 @@ void Sim800lAlertSender::begin(const String &initialAuthCode) {
     String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + resolvedApn_ + "\"";
     sendATCommand(cgdcont, "OK", 2000);
   }
+  pollLbsCellInfo(false);
   LOG_INFO("Módulo GSM inicializado para recibir SMS");
+}
+
+void Sim800lAlertSender::pollLbsCellInfo(bool requestCoordinatesIfNoGps) {
+  lastLbsPollMs_ = millis();
+
+  if (mcc_ == 0) {
+    String imsiResp = queryATResponse("AT+CIMI", 1000);
+    extractDigitsMccMnc(imsiResp, mcc_, mnc_);
+  }
+
+  uint32_t regLac = 0, regCi = 0;
+  String cregResp = queryATResponse("AT+CREG?", 800);
+  if (!parseRegLacCellId(cregResp, regLac, regCi)) {
+    String cgregResp = queryATResponse("AT+CGREG?", 800);
+    parseRegLacCellId(cgregResp, regLac, regCi);
+  }
+  if (regCi > 0) {
+    lac_ = regLac;
+    cellId_ = regCi;
+  }
+
+  if (requestCoordinatesIfNoGps) {
+    // 1. Intentar AT+CLBS=1,1 (+CLBS: 0,<lat>,<lon>,<acc>)
+    String clbs = queryATResponse("AT+CLBS=1,1", 2500);
+    int clbsIdx = clbs.indexOf("+CLBS:");
+    if (clbsIdx >= 0) {
+      int lineEnd = clbs.indexOf('\n', clbsIdx);
+      String line = (lineEnd >= 0) ? clbs.substring(clbsIdx + 6, lineEnd)
+                                   : clbs.substring(clbsIdx + 6);
+      line.trim();
+      int c1 = line.indexOf(',');
+      int c2 = (c1 >= 0) ? line.indexOf(',', c1 + 1) : -1;
+      int c3 = (c2 >= 0) ? line.indexOf(',', c2 + 1) : -1;
+      if (c1 >= 0 && c2 >= 0) {
+        int code = line.substring(0, c1).toInt();
+        double lat = line.substring(c1 + 1, c2).toDouble();
+        double lon = (c3 >= 0) ? line.substring(c2 + 1, c3).toDouble()
+                               : line.substring(c2 + 1).toDouble();
+        int acc = (c3 >= 0) ? line.substring(c3 + 1).toInt() : 500;
+        if (code == 0 && (std::fabs(lat) > 0.0001 || std::fabs(lon) > 0.0001)) {
+          lbsLat_ = lat;
+          lbsLon_ = lon;
+          lbsAccM_ = (acc > 0) ? acc : 500;
+          hasLbsCoords_ = true;
+          return;
+        }
+      }
+    }
+
+    // 2. Fallback SIM800L AT+CIPGSMLOC=1,1 (+CIPGSMLOC: 0,<lon>,<lat>,<date>,<time>)
+    String gsmLoc = queryATResponse("AT+CIPGSMLOC=1,1", 2500);
+    int locIdx = gsmLoc.indexOf("+CIPGSMLOC:");
+    if (locIdx >= 0) {
+      int lineEnd = gsmLoc.indexOf('\n', locIdx);
+      String line = (lineEnd >= 0) ? gsmLoc.substring(locIdx + 11, lineEnd)
+                                   : gsmLoc.substring(locIdx + 11);
+      line.trim();
+      int c1 = line.indexOf(',');
+      int c2 = (c1 >= 0) ? line.indexOf(',', c1 + 1) : -1;
+      int c3 = (c2 >= 0) ? line.indexOf(',', c2 + 1) : -1;
+      if (c1 >= 0 && c2 >= 0 && c3 >= 0) {
+        int code = line.substring(0, c1).toInt();
+        double lon = line.substring(c1 + 1, c2).toDouble();
+        double lat = line.substring(c2 + 1, c3).toDouble();
+        if (code == 0 && (std::fabs(lat) > 0.0001 || std::fabs(lon) > 0.0001)) {
+          lbsLat_ = lat;
+          lbsLon_ = lon;
+          lbsAccM_ = 500;
+          hasLbsCoords_ = true;
+        }
+      }
+    }
+  }
+}
+
+void Sim800lAlertSender::enrichWithLbs(GpsLocation &gps) {
+  if ((cellId_ == 0 && mcc_ == 0) ||
+      (!gps.isValid && (lastLbsPollMs_ == 0 || millis() - lastLbsPollMs_ >= 25000UL))) {
+    pollLbsCellInfo(!gps.isValid);
+  }
+  gps.lbsValid = (mcc_ > 0 && cellId_ > 0) || hasLbsCoords_;
+  gps.mcc = mcc_;
+  gps.mnc = mnc_;
+  gps.lac = lac_;
+  gps.cellId = cellId_;
+  gps.lbsAccuracyM = lbsAccM_;
+
+  if (!gps.isValid && hasLbsCoords_) {
+    gps.isValid = true;
+    gps.isLbsFallback = true;
+    gps.latitude = lbsLat_;
+    gps.longitude = lbsLon_;
+  }
 }
 
 void Sim800lAlertSender::setCommandCallback(SmsCommandCallback cb) {
@@ -308,6 +468,7 @@ void Sim800lAlertSender::checkStatus() {
           String cregResp = queryATResponse("AT+CREG?", 1000);
           bool registered =
               (cregResp.indexOf(",1") >= 0 || cregResp.indexOf(",5") >= 0);
+          parseRegLacCellId(cregResp, lac_, cellId_);
           if (lastRssiCsq_ >= 12 && (csq == 0 || csq == 99) && !registered) {
             jammingDetected_ = true;
             LOG_WARN("Posible interferencia RF GSM detectada (GTJDC)");
@@ -363,11 +524,16 @@ void Sim800lAlertSender::sendAlert(const AccidentEvent &accident,
     sms_data += "Tipo: REMOLQUE NO AUTORIZADO\r\n";
 
   if (gps.isValid) {
-    sms_data += "Ubic: http://maps.google.com/maps?q=loc:";
+    sms_data += gps.isLbsFallback ? "Ubic(LBS): http://maps.google.com/maps?q=loc:"
+                                  : "Ubic: http://maps.google.com/maps?q=loc:";
     sms_data +=
         String(gps.latitude, 6) + "," + String(gps.longitude, 6) + "\r\n";
   } else {
     sms_data += "GPS: No disponible\r\n";
+  }
+  if (gps.lbsValid && gps.cellId > 0) {
+    sms_data += "Celda LBS: " + String(gps.mcc) + "-" + String(gps.mnc) + "-" +
+                String(gps.lac) + "-" + String(gps.cellId) + "\r\n";
   }
 
   sms_data += "Hora: " + timestamp + "\r\nID: " + chipId;
