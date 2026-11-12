@@ -23,6 +23,8 @@ public:
   virtual void setCommandCallback(SmsCommandCallback cb) = 0;
   virtual bool isResponsive() = 0;
   virtual void enrichWithLbs(GpsLocation &gps) { (void)gps; }
+  virtual bool isJammingDetected() const { return false; }
+  virtual uint16_t modemRecoveries() const { return 0; }
 };
 
 #endif // DOMAIN_IGSMALERTSENDER_H

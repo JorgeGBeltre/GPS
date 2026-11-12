@@ -25,6 +25,7 @@ private:
   TinyGPSPlus gps;
   SoftwareSerial gpsSerial;
   bool hasAnchor_ = false;
+  bool towLatched_ = false;
   double anchorLat_ = 0.0;
   double anchorLon_ = 0.0;
 };

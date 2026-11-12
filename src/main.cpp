@@ -21,6 +21,7 @@
 #include "infrastructure/provisioning/QuickPairingPortal.h"
 #include "infrastructure/sensors/Mpu6050Detector.h"
 #include "infrastructure/system/EspClock.h"
+#include "infrastructure/system/EspSysUtils.h"
 
 // ── Infrastructure (concrete implementations) ────────────────────
 LittleFsConfigRepository configRepo;
@@ -111,12 +112,19 @@ static void executeFactoryUnlinkToQuickPairing() {
   WiFi.disconnect(true);
   ESP.eraseConfig();
   delay(200);
+  EspSysUtils::markGracefulReboot();
   ESP.restart();
 }
 
 void setup() {
   Serial.begin(115200);
+  EspSysUtils::initBootAndWatchdog();
   Serial.println("\n\n*** INICIO SISTEMA VESIS (CLEAN ARCHITECTURE) ***");
+  Serial.printf("[BOOT] boot=%lu, unexpected=%u, wdt_offences=%u, reason=%s\n",
+                static_cast<unsigned long>(EspSysUtils::bootCount()),
+                static_cast<unsigned>(EspSysUtils::unexpectedReboots()),
+                static_cast<unsigned>(EspSysUtils::wdtOffences()),
+                EspSysUtils::resetReason());
 
   char chipHex[16];
   snprintf(chipHex, sizeof(chipHex), "%08X", ESP.getChipId());
@@ -180,5 +188,5 @@ void loop() {
 
   accidentService.process();
 
-  ESP.wdtFeed();
+  EspSysUtils::heartbeat();
 }

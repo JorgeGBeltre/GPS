@@ -25,7 +25,8 @@ public:
   void checkStatus();
   void probeAutoApn();
   void pollLbsCellInfo(bool requestCoordinatesIfNoGps);
-  bool isJammingDetected() const { return jammingDetected_; }
+  bool isJammingDetected() const override { return jammingDetected_; }
+  uint16_t modemRecoveries() const override { return modemRecoveries_; }
   bool isSimPresent() const { return simPresent_; }
   bool isApnAutoDetected() const { return apnAutoDetected_; }
   const String &resolvedApn() const { return resolvedApn_; }
@@ -40,6 +41,7 @@ private:
   String queryATResponse(const String &command, unsigned long timeoutMs);
   String autoResolveCarrierApn();
   void processReceivedSms();
+  void recoverUnresponsiveModem();
 
   IConfigRepository &m_config;
   SoftwareSerial sim800;
@@ -69,6 +71,10 @@ private:
   String currentNumber;
   String currentDate;
   unsigned long lastByteTime;
+  unsigned long lastHealthCheckMs_ = 0;
+  unsigned long lastModemRecoveryMs_ = 0;
+  uint16_t modemRecoveries_ = 0;
+  uint8_t consecutiveAtFailures_ = 0;
 };
 
 #endif // INFRA_SIM800LALERTSENDER_H

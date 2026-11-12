@@ -1,6 +1,7 @@
 #include "infrastructure/gsm/Sim800lAlertSender.h"
 
 #include "config.h"
+#include "infrastructure/system/EspSysUtils.h"
 #include <cmath>
 #include <cstdlib>
 
@@ -112,6 +113,7 @@ String Sim800lAlertSender::queryATResponse(const String &command,
   unsigned long startTime = millis();
   String response = "";
   while (millis() - startTime < timeoutMs) {
+    EspSysUtils::heartbeat();
     while (sim800.available()) {
       response += static_cast<char>(sim800.read());
     }
@@ -309,7 +311,12 @@ void Sim800lAlertSender::setCommandCallback(SmsCommandCallback cb) {
   commandCallback = cb;
 }
 
-void Sim800lAlertSender::update() { processReceivedSms(); }
+void Sim800lAlertSender::update() {
+  processReceivedSms();
+  if (!enSMS && smsBuffer.length() == 0) {
+    checkStatus();
+  }
+}
 
 void Sim800lAlertSender::processReceivedSms() {
   while (sim800.available()) {
@@ -432,55 +439,69 @@ void Sim800lAlertSender::sendResponse(const String &numero,
 }
 
 bool Sim800lAlertSender::isResponsive() {
-  while (sim800.available())
-    sim800.read();
-  sim800.println("AT");
-  delay(1000);
-  bool responded = false;
-  unsigned long timeout = millis();
-  while (millis() - timeout < 3000) {
-    if (sim800.available()) {
-      String response = sim800.readString();
-      if (response.indexOf("OK") >= 0) {
-        responded = true;
-        break;
-      }
-    }
-    delay(100);
+  String resp = queryATResponse("AT", 600);
+  return resp.indexOf("OK") >= 0;
+}
+
+void Sim800lAlertSender::recoverUnresponsiveModem() {
+  const unsigned long now = millis();
+  if (lastModemRecoveryMs_ != 0 && (now - lastModemRecoveryMs_ < 300000UL)) {
+    return;
   }
-  return responded;
+  lastModemRecoveryMs_ = now;
+  modemRecoveries_++;
+  consecutiveAtFailures_ = 0;
+  LOG_WARN("Auto-recuperando SIM800L no responsivo (AT+CFUN=1,1, cooldown 300s)...");
+  sim800.begin(9600);
+  sendATCommand("AT+CFUN=1,1", "OK", 1000);
+  for (int i = 0; i < 6; ++i) {
+    EspSysUtils::heartbeat();
+    delay(250);
+  }
+  if (isResponsive()) {
+    sendATCommand("ATE0", "OK", 500);
+    sendATCommand("AT+CMGF=1", "OK", 500);
+    sendATCommand("AT+CNMI=2,2,0,0,0", "OK", 500);
+    sendATCommand("AT+CREG=2", "OK", 500);
+    sendATCommand("AT+CGREG=2", "OK", 500);
+  }
 }
 
 void Sim800lAlertSender::checkStatus() {
-  static unsigned long lastCheck = 0;
-  if (millis() - lastCheck > 30000) {
-    if (!isResponsive()) {
-      LOG_WARN("Reiniciando comunicación GSM...");
-      begin(currentAuthCode);
-    } else {
-      // Cellular RF Jamming Detection (GTJDC): monitor abrupt signal loss + CREG drop
-      String csqResp = queryATResponse("AT+CSQ", 1000);
-      int csqIdx = csqResp.indexOf("+CSQ:");
-      if (csqIdx >= 0) {
-        int commaIdx = csqResp.indexOf(",", csqIdx);
-        if (commaIdx > csqIdx) {
-          int csq = csqResp.substring(csqIdx + 5, commaIdx).toInt();
-          String cregResp = queryATResponse("AT+CREG?", 1000);
-          bool registered =
-              (cregResp.indexOf(",1") >= 0 || cregResp.indexOf(",5") >= 0);
-          parseRegLacCellId(cregResp, lac_, cellId_);
-          if (lastRssiCsq_ >= 12 && (csq == 0 || csq == 99) && !registered) {
-            jammingDetected_ = true;
-            LOG_WARN("Posible interferencia RF GSM detectada (GTJDC)");
-          } else if (registered && csq >= 5 && csq != 99) {
-            jammingDetected_ = false;
-          }
-          if (csq != 99)
-            lastRssiCsq_ = csq;
-        }
-      }
+  const unsigned long now = millis();
+  if (now - lastHealthCheckMs_ < 60000UL)
+    return;
+  lastHealthCheckMs_ = now;
+
+  String atResp = queryATResponse("AT", 400);
+  if (atResp.indexOf("OK") < 0) {
+    if (++consecutiveAtFailures_ >= 3) {
+      recoverUnresponsiveModem();
     }
-    lastCheck = millis();
+    return;
+  }
+  consecutiveAtFailures_ = 0;
+
+  // Cellular RF Jamming Detection (GTJDC): monitor abrupt signal loss + CREG drop
+  String csqResp = queryATResponse("AT+CSQ", 600);
+  int csqIdx = csqResp.indexOf("+CSQ:");
+  if (csqIdx >= 0) {
+    int commaIdx = csqResp.indexOf(",", csqIdx);
+    if (commaIdx > csqIdx) {
+      int csq = csqResp.substring(csqIdx + 5, commaIdx).toInt();
+      String cregResp = queryATResponse("AT+CREG?", 600);
+      bool registered =
+          (cregResp.indexOf(",1") >= 0 || cregResp.indexOf(",5") >= 0);
+      parseRegLacCellId(cregResp, lac_, cellId_);
+      if (lastRssiCsq_ >= 12 && (csq == 0 || csq == 99) && !registered) {
+        jammingDetected_ = true;
+        LOG_WARN("Posible interferencia RF GSM detectada (GTJDC)");
+      } else if (registered && csq >= 5 && csq != 99) {
+        jammingDetected_ = false;
+      }
+      if (csq != 99)
+        lastRssiCsq_ = csq;
+    }
   }
 }
 
@@ -493,6 +514,7 @@ bool Sim800lAlertSender::sendATCommand(const String &command,
   unsigned long startTime = millis();
   String response = "";
   while (millis() - startTime < timeoutMs) {
+    EspSysUtils::heartbeat();
     if (sim800.available()) {
       char c = sim800.read();
       response += c;

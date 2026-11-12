@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "config.h"
+#include "infrastructure/system/EspSysUtils.h"
 
 AccidentService::AccidentService(IAccidentDetector &detector, IGpsProvider &gps,
                                  IGsmAlertSender &gsm, IMqttTransport &mqtt,
@@ -27,7 +28,7 @@ void AccidentService::process() {
 
   m_gsm.sendAlert(event, location, ts, m_device.chipId);
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<640> doc;
   doc["type"] = "accident";
   doc["impact"] = event.impact_detected;
   doc["rollover"] = event.rollover_detected;
@@ -36,6 +37,7 @@ void AccidentService::process() {
   doc["harsh_accel"] = event.harsh_acceleration;
   doc["harsh_cornering"] = event.harsh_cornering;
   doc["tow"] = event.tow_detected;
+  doc["jamming"] = m_gsm.isJammingDetected();
   doc["virtual_ignition"] = event.virtual_ignition;
   doc["pos_src"] = location.isValid
                        ? (location.isLbsFallback ? "LBS" : "GPS")
@@ -56,10 +58,14 @@ void AccidentService::process() {
       doc["lbs_acc_m"] = location.lbsAccuracyM;
     }
   }
+  doc["boot_count"] = EspSysUtils::bootCount();
+  doc["unexpected_reboots"] = EspSysUtils::unexpectedReboots();
+  doc["wdt_offences"] = EspSysUtils::wdtOffences();
+  doc["modem_recoveries"] = m_gsm.modemRecoveries();
   doc["id"] = m_device.chipId;
   doc["timestamp"] = ts;
 
-  char buffer[512];
+  char buffer[640];
   serializeJson(doc, buffer);
   m_mqtt.publish("telemetry/accidents", buffer);
 }

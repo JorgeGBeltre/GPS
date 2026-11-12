@@ -2,15 +2,26 @@
 #define INFRA_ESPSYSUTILS_H
 
 #include <Arduino.h>
+#include <cstdint>
 
-// Misc system helpers that don't belong to a specific device. Formerly the
-// Base64 portion of SysUtils. Kept as a free-function namespace since these are
-// stateless utilities (used by the OTA path).
+// System helpers: Base64 utilities + RTC User Memory boot diagnostics
+// (TRGR_212 PsmWakeStateService) and 2-stage loop-cadence watchdog
+// (TRGR_212 MitWatchdogService) with zero heap usage.
 namespace EspSysUtils {
 
 bool isBase64Char(unsigned char c);
 bool base64DecodeToBuffer(const String &encoded, uint8_t *out, size_t outMax,
                           size_t &outLen);
+
+void initBootAndWatchdog();
+void heartbeat();
+void setWatchdogPaused(bool paused);
+void markGracefulReboot();
+
+uint32_t bootCount();
+uint16_t unexpectedReboots();
+uint16_t wdtOffences();
+const char *resetReason();
 
 } // namespace EspSysUtils
 

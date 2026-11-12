@@ -41,26 +41,43 @@ void LittleFsConfigRepository::load() {
   AccidentConfig defaultConfig;
   populateDefaultDeviceKey(defaultConfig.device_key);
 
-  if (!LittleFS.exists(configFilePath)) {
-    LOG_INFO("Archivo config no existe, creando default...");
-    currentConfig = defaultConfig;
-    save();
-    return;
-  }
-
-  File file = LittleFS.open(configFilePath, "r");
-  if (!file) {
-    LOG_ERROR("Fallo al abrir config para lectura");
-    currentConfig = defaultConfig;
-    return;
-  }
+  const char *bakPath = "/config.bak";
+  const char *tmpPath = "/config.tmp";
 
   StaticJsonDocument<1024> doc;
-  DeserializationError error = deserializeJson(doc, file);
-  file.close();
+  bool loadedOk = false;
 
-  if (error) {
-    LOG_ERROR("Fallo al parsear config.json, restaurando default");
+  auto tryLoadFrom = [&](const char *path) -> bool {
+    if (!LittleFS.exists(path))
+      return false;
+    File f = LittleFS.open(path, "r");
+    if (!f || f.size() < 2) {
+      if (f)
+        f.close();
+      return false;
+    }
+    doc.clear();
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    return !err;
+  };
+
+  if (tryLoadFrom(configFilePath)) {
+    loadedOk = true;
+  } else if (tryLoadFrom(bakPath)) {
+    LOG_WARN("config.json ausente/corrupto; recuperando desde /config.bak");
+    LittleFS.remove(configFilePath);
+    LittleFS.rename(bakPath, configFilePath);
+    loadedOk = true;
+  } else if (tryLoadFrom(tmpPath)) {
+    LOG_WARN("Recuperando configuracion desde /config.tmp");
+    LittleFS.remove(configFilePath);
+    LittleFS.rename(tmpPath, configFilePath);
+    loadedOk = true;
+  }
+
+  if (!loadedOk) {
+    LOG_INFO("Archivo config no existe o invalido, creando default...");
     currentConfig = defaultConfig;
     save();
     return;
@@ -145,9 +162,12 @@ void LittleFsConfigRepository::save() {
     currentConfig.account_bound = true;
   }
 
-  File file = LittleFS.open(configFilePath, "w");
+  const char *tmpPath = "/config.tmp";
+  const char *bakPath = "/config.bak";
+
+  File file = LittleFS.open(tmpPath, "w");
   if (!file) {
-    LOG_ERROR("Fallo al abrir config para escritura");
+    LOG_ERROR("Fallo al abrir /config.tmp para escritura");
     return;
   }
 
@@ -171,18 +191,47 @@ void LittleFsConfigRepository::save() {
   doc["sled_online"] = currentConfig.sled_online;
   doc["account_bound"] = currentConfig.account_bound;
 
-  if (serializeJson(doc, file) == 0) {
-    LOG_ERROR("Fallo al escribir config a file");
-  }
+  const size_t written = serializeJson(doc, file);
+  file.flush();
   file.close();
-  LOG_INFO("Configuracion guardada en LittleFS");
+  if (written <= 2) {
+    LOG_ERROR("Fallo al escribir /config.tmp; conservando config previa");
+    LittleFS.remove(tmpPath);
+    return;
+  }
+
+  if (LittleFS.exists(configFilePath)) {
+    LittleFS.remove(bakPath);
+    LittleFS.rename(configFilePath, bakPath);
+  }
+  if (!LittleFS.rename(tmpPath, configFilePath)) {
+    LOG_ERROR("Fallo en rename atomico de /config.tmp; restaurando .bak");
+    if (LittleFS.exists(bakPath)) {
+      LittleFS.rename(bakPath, configFilePath);
+    }
+    return;
+  }
+  LOG_INFO("Configuracion guardada atomicamente en LittleFS");
 }
 
 void LittleFsConfigRepository::factoryReset() {
+  char preservedKey[37] = {0};
+  if (std::strlen(currentConfig.device_key) > 0) {
+    std::strncpy(preservedKey, currentConfig.device_key,
+                 sizeof(preservedKey) - 1);
+  }
+  LittleFS.remove("/config.tmp");
+  LittleFS.remove("/config.bak");
   if (LittleFS.exists(configFilePath)) {
     LittleFS.remove(configFilePath);
   }
   currentConfig = AccidentConfig{};
-  populateDefaultDeviceKey(currentConfig.device_key);
+  if (preservedKey[0] != '\0') {
+    std::strncpy(currentConfig.device_key, preservedKey,
+                 sizeof(currentConfig.device_key) - 1);
+    currentConfig.device_key[sizeof(currentConfig.device_key) - 1] = '\0';
+  } else {
+    populateDefaultDeviceKey(currentConfig.device_key);
+  }
   save();
 }

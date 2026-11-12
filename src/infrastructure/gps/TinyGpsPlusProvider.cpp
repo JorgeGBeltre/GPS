@@ -54,14 +54,18 @@ void TinyGpsPlusProvider::readData(GpsLocation &data) {
       data.latitude = anchorLat_;
       data.longitude = anchorLon_;
       data.driftFiltered = true;
+      towLatched_ = false;
     } else {
       data.latitude = rawLat;
       data.longitude = rawLon;
-      // Parked Tow Detection (GTTOW): displacement > 100 m while low/parked speed
-      if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
-        data.towDetected = true;
+      // Parked Tow Detection (GTTOW) with +20 m exit hysteresis (100 m set, < 80 m or >= 8 km/h clear)
+      if (speedKmh >= 8.0f || distFromAnchorM < 80.0) {
+        towLatched_ = false;
+      } else if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
+        towLatched_ = true;
       }
-      if (speedKmh >= 5.0f || distFromAnchorM > 30.0) {
+      data.towDetected = towLatched_;
+      if (speedKmh >= 5.0f || (!towLatched_ && distFromAnchorM > 30.0)) {
         anchorLat_ = rawLat;
         anchorLon_ = rawLon;
       }

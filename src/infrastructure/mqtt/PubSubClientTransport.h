@@ -16,6 +16,7 @@
 class PubSubClientTransport : public IMqttTransport {
 public:
   static constexpr size_t OFFLINE_QUEUE_CAPACITY = 8;
+  static constexpr size_t MAX_OFFLINE_PAYLOAD_BYTES = 768;
 
   struct BufferedMqttFrame {
     String topic;
@@ -35,6 +36,7 @@ public:
 
 private:
   bool connectMQTT();
+  void publishBirthOrHeartbeatStatus();
   void enqueueOffline(const char *topic, const char *message);
   void flushOfflineQueue();
   static void mqttCallbackWrapper(char *topic, byte *payload,
@@ -50,6 +52,9 @@ private:
   String m_chipId;
   bool mqttConnected;
   unsigned long lastReconnectAttempt;
+  unsigned long lastWifiAttemptMs_ = 0;
+  unsigned long wifiRetryIntervalMs_ = 15000UL;
+  unsigned long lastStatusPublishMs_ = 0;
   int mqttFailCount;
   WiFiStatus currentWiFiStatus;
   unsigned long previousMillis;

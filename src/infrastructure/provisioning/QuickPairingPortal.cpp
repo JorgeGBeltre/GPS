@@ -1,4 +1,5 @@
 #include "infrastructure/provisioning/QuickPairingPortal.h"
+#include "infrastructure/system/EspSysUtils.h"
 #include <ArduinoJson.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
@@ -422,26 +423,32 @@ void QuickPairingPortal::runPairingWorkflow(
     const String &chipId, IConfigRepository &configRepo,
     GpioIndicator &indicator, GpioButton &button,
     bool isInitialUnprovisionedBoot) {
+  EspSysUtils::setWatchdogPaused(true);
   QuickPairingResult res = runQuickPairing(
       configRepo, indicator, button,
       isInitialUnprovisionedBoot ? 60000UL : 180000UL);
 
   if (res == QuickPairingResult::Provisioned) {
     delay(300);
+    EspSysUtils::markGracefulReboot();
     ESP.restart();
     return;
   }
 
   if (res == QuickPairingResult::CancelledByButton) {
+    EspSysUtils::setWatchdogPaused(false);
     return;
   }
 
   if (res == QuickPairingResult::SwitchToSoftAp || isInitialUnprovisionedBoot) {
     if (runSoftApPortal(chipId, configRepo, indicator, button, 180000UL)) {
       delay(300);
+      EspSysUtils::markGracefulReboot();
       ESP.restart();
+      return;
     }
   }
+  EspSysUtils::setWatchdogPaused(false);
 }
 
 } // namespace gps::infra

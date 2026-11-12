@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "config.h"
+#include "infrastructure/system/EspSysUtils.h"
 
 namespace {
 bool verifyBearSslUnlinkProof(const char *deviceKey, const char *chipId,
@@ -140,49 +141,68 @@ void PubSubClientTransport::begin(const String &chipId) {
 }
 
 void PubSubClientTransport::update() {
+  const unsigned long now = millis();
   if (WiFi.status() != WL_CONNECTED) {
+    mqttConnected = false;
     if (currentWiFiStatus == WIFI_CONNECTED) {
       currentWiFiStatus = WIFI_DISCONNECTED;
+      wifiRetryIntervalMs_ = 15000UL;
       LOG_WARN("WiFi desconectado");
     }
-    if (currentWiFiStatus != WIFI_CONNECTING) {
+    if (currentWiFiStatus != WIFI_CONNECTING ||
+        (now - lastWifiAttemptMs_ >= wifiRetryIntervalMs_)) {
       const auto &cfg = m_config.config();
       if (strlen(cfg.wifi_ssid) > 0) {
         currentWiFiStatus = WIFI_CONNECTING;
+        lastWifiAttemptMs_ = now;
+        WiFi.disconnect(false);
         WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+        wifiRetryIntervalMs_ =
+            (wifiRetryIntervalMs_ < 30000UL) ? (wifiRetryIntervalMs_ * 2UL)
+                                             : 60000UL;
       } else if (WiFi.SSID().length() > 0) {
         currentWiFiStatus = WIFI_CONNECTING;
+        lastWifiAttemptMs_ = now;
         WiFi.begin();
+        wifiRetryIntervalMs_ =
+            (wifiRetryIntervalMs_ < 30000UL) ? (wifiRetryIntervalMs_ * 2UL)
+                                             : 60000UL;
       }
     }
   } else {
     if (currentWiFiStatus != WIFI_CONNECTED) {
       currentWiFiStatus = WIFI_CONNECTED;
+      wifiRetryIntervalMs_ = 15000UL;
       LOG_INFO("WiFi conectado");
     }
 
     if (!mqtt_client.connected()) {
       mqttConnected = false;
-      unsigned long now = millis();
       unsigned long reconnectDelay =
           min((unsigned long)(MQTT_RECONNECT_INTERVAL *
                               (1UL << (unsigned)mqttFailCount)),
-              300000UL);
-      reconnectDelay += (unsigned long)random(0, 2000);
+              60000UL);
+      reconnectDelay += ((now * 37UL) % 1500UL);
 
       if (now - lastReconnectAttempt > reconnectDelay) {
         lastReconnectAttempt = now;
         if (connectMQTT()) {
           mqttFailCount = 0;
+          publishBirthOrHeartbeatStatus();
+          lastStatusPublishMs_ = now;
           flushOfflineQueue();
         } else {
-          mqttFailCount = min(mqttFailCount + 1, 5);
+          mqttFailCount = min(mqttFailCount + 1, 4);
         }
       }
     } else {
       mqtt_client.loop();
       if (queueCount_ > 0) {
         flushOfflineQueue();
+      }
+      if (now - lastStatusPublishMs_ >= STATUS_PUBLISH_INTERVAL) {
+        lastStatusPublishMs_ = now;
+        publishBirthOrHeartbeatStatus();
       }
     }
   }
@@ -192,6 +212,9 @@ bool PubSubClientTransport::connectMQTT() {
   const auto &cfg = m_config.config();
   const char *broker =
       (strlen(cfg.mqtt_server) > 0) ? cfg.mqtt_server : MQTT_SERVER;
+  if (!broker || broker[0] == '\0' || strcmp(broker, MQTT_SERVER) == 0) {
+    return false;
+  }
   const int port = (cfg.mqtt_port > 0) ? cfg.mqtt_port : MQTT_PORT;
   if (port == 1883) {
     mqtt_client.setClient(plainClient);
@@ -208,9 +231,11 @@ bool PubSubClientTransport::connectMQTT() {
   String clientID = m_chipId;
   String statusWillTopic = "status/" + m_chipId;
   String statusWillPayload = "{\"status\":\"offline\",\"chipId\":\"" + m_chipId + "\"}";
+  EspSysUtils::heartbeat();
   if (mqtt_client.connect(clientID.c_str(), user, pass,
                           statusWillTopic.c_str(), 1, true,
                           statusWillPayload.c_str())) {
+    EspSysUtils::heartbeat();
     mqttConnected = true;
 
     String deviceEventTopic = "event/" + m_chipId;
@@ -222,11 +247,40 @@ bool PubSubClientTransport::connectMQTT() {
 
     return true;
   }
+  EspSysUtils::heartbeat();
   return false;
+}
+
+void PubSubClientTransport::publishBirthOrHeartbeatStatus() {
+  if (!mqtt_client.connected())
+    return;
+  char topicBuf[40];
+  std::snprintf(topicBuf, sizeof(topicBuf), "status/%s", m_chipId.c_str());
+  char payloadBuf[320];
+  std::snprintf(
+      payloadBuf, sizeof(payloadBuf),
+      "{\"status\":\"online\",\"chipId\":\"%s\",\"fw\":\"%s\","
+      "\"boot_count\":%lu,\"unexpected_reboots\":%u,\"wdt_offences\":%u,"
+      "\"offline_queued\":%u,\"free_heap\":%lu,\"reset_reason\":\"%s\"}",
+      m_chipId.c_str(), FIRMWARE_VERSION,
+      static_cast<unsigned long>(EspSysUtils::bootCount()),
+      static_cast<unsigned>(EspSysUtils::unexpectedReboots()),
+      static_cast<unsigned>(EspSysUtils::wdtOffences()),
+      static_cast<unsigned>(queueCount_),
+      static_cast<unsigned long>(ESP.getFreeHeap()),
+      EspSysUtils::resetReason());
+  mqtt_client.publish(topicBuf, payloadBuf, true);
 }
 
 void PubSubClientTransport::enqueueOffline(const char *topic,
                                            const char *message) {
+  if (!topic || !message)
+    return;
+  const size_t msgLen = std::strlen(message);
+  if (msgLen == 0 || msgLen > MAX_OFFLINE_PAYLOAD_BYTES) {
+    LOG_WARN("Trama offline descartada por limite de heap (MAX 768B)");
+    return;
+  }
   size_t slot = (queueHead_ + queueCount_) % OFFLINE_QUEUE_CAPACITY;
   if (queueCount_ == OFFLINE_QUEUE_CAPACITY) {
     queueHead_ = (queueHead_ + 1) % OFFLINE_QUEUE_CAPACITY;
@@ -239,13 +293,18 @@ void PubSubClientTransport::enqueueOffline(const char *topic,
 }
 
 void PubSubClientTransport::flushOfflineQueue() {
-  while (queueCount_ > 0 && mqtt_client.connected()) {
+  size_t drained = 0;
+  while (drained < 2 && queueCount_ > 0 && mqtt_client.connected()) {
     const auto &item = offlineQueue_[queueHead_];
     if (!mqtt_client.publish(item.topic.c_str(), item.payload.c_str())) {
       break;
     }
+    offlineQueue_[queueHead_].topic = String();
+    offlineQueue_[queueHead_].payload = String();
     queueHead_ = (queueHead_ + 1) % OFFLINE_QUEUE_CAPACITY;
     queueCount_--;
+    drained++;
+    EspSysUtils::heartbeat();
     mqtt_client.loop();
   }
 }
